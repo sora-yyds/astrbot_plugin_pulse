@@ -1,0 +1,87 @@
+{
+  "enabled": {
+    "description": "启用定时推送",
+    "type": "bool",
+    "default": true
+  },
+  "timezone": {
+    "description": "调度时区",
+    "type": "string",
+    "hint": "IANA 时区名称，例如 Asia/Shanghai。",
+    "default": "Asia/Shanghai"
+  },
+  "push_delay_min_seconds": {
+    "description": "多群推送最小延迟秒数",
+    "type": "float",
+    "hint": "向下一个目标会话发送前会随机等待，用于降低批量发送风险。",
+    "default": 8.0
+  },
+  "push_delay_max_seconds": {
+    "description": "多群推送最大延迟秒数",
+    "type": "float",
+    "hint": "目标群较多时建议适当调大。",
+    "default": 25.0
+  },
+  "epic_enabled": {
+    "description": "启用 Epic 免费游戏推送",
+    "type": "bool",
+    "default": true
+  },
+  "epic_daily_time": {
+    "description": "Epic 每日推送时间",
+    "type": "string",
+    "hint": "24 小时制 HH:MM，例如 08:20。",
+    "default": "08:20"
+  },
+  "epic_target_sessions": {
+    "description": "Epic 推送目标会话",
+    "type": "list",
+    "hint": "可在目标会话中使用 /pulse bind_epic 自动写入。",
+    "default": []
+  },
+  "send_epic_images": {
+    "description": "在 Epic 图片卡片中展示游戏封面",
+    "type": "bool",
+    "default": true
+  },
+  "epic_max_items": {
+    "description": "Epic 单次最多展示数量",
+    "type": "int",
+    "default": 6
+  },
+  "news_enabled": {
+    "description": "启用 AI 行业简报推送",
+    "type": "bool",
+    "default": true
+  },
+  "news_daily_time": {
+    "description": "AI 简报每日推送时间",
+    "type": "string",
+    "hint": "24 小时制 HH:MM，例如 08:35。",
+    "default": "08:35"
+  },
+  "news_target_sessions": {
+    "description": "AI 简报推送目标会话",
+    "type": "list",
+    "hint": "可在目标会话中使用 /pulse bind_news 自动写入。",
+    "default": []
+  },
+  "news_endpoint": {
+    "description": "AI 新闻聚合接口",
+    "type": "string",
+    "hint": "Cloudflare Worker 返回的已清洗 JSON 接口 URL。",
+    "default": ""
+  },
+  "news_bearer_token": {
+    "description": "AI 新闻接口 Bearer Token",
+    "type": "string",
+    "hint": "需要与 Cloudflare Worker 的 SECRET_TOKEN 一致。",
+    "default": ""
+  },
+  "news_max_items": {
+    "description": "AI 简报最多处理资讯数",
+    "type": "int",
+    "hint": "会一次性交给 LLM 生成 QQ 简报和本地 Markdown 长文，建议不超过 15。",
+    "default": 15
+  }
+}

@@ -1,0 +1,1 @@
+"""AstrBot Pulse plugin package."""

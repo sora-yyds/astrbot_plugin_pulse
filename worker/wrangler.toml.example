@@ -1,0 +1,18 @@
+name = "astrbot-plugin-pulse-ai-news"
+main = "src/index.ts"
+compatibility_date = "2026-05-03"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[kv_namespaces]]
+binding = "PULSE_KV"
+id = "replace-with-production-kv-namespace-id"
+preview_id = "replace-with-preview-kv-namespace-id"
+
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Configure the bearer token with:
+# wrangler secret put SECRET_TOKEN
