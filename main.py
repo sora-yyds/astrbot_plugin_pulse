@@ -6,8 +6,10 @@ import json
 import random
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from pathlib import Path
+from typing import Any
 
 try:
     from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -20,6 +22,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 import astrbot.api.message_components as Comp
+import httpx
 
 from .services.epic import EpicFreeGame, EpicGamesClient
 from .services.news import AiNewsClient, NewsItem, NewsSynthesisError
@@ -31,6 +34,12 @@ QQ_BRIEF_START = "[QQ_BRIEF_START]"
 QQ_BRIEF_END = "[QQ_BRIEF_END]"
 LOCAL_ARTICLE_START = "[LOCAL_ARTICLE_START]"
 LOCAL_ARTICLE_END = "[LOCAL_ARTICLE_END]"
+ARTICLE_TITLE_START = "[ARTICLE_TITLE_START]"
+ARTICLE_TITLE_END = "[ARTICLE_TITLE_END]"
+ARTICLE_EXCERPT_START = "[ARTICLE_EXCERPT_START]"
+ARTICLE_EXCERPT_END = "[ARTICLE_EXCERPT_END]"
+ARTICLE_TAGS_START = "[ARTICLE_TAGS_START]"
+ARTICLE_TAGS_END = "[ARTICLE_TAGS_END]"
 
 HTML_RENDER_OPTIONS = {
     "type": "png",
@@ -38,6 +47,128 @@ HTML_RENDER_OPTIONS = {
     "animations": "disabled",
     "timeout": 30000,
 }
+
+SYNCPOST_PATH = "/apis/api.starter.halo.run/v1alpha1/articles"
+
+
+class HaloPublishError(Exception):
+    """Raised when a generated article cannot be published to Halo."""
+
+
+@dataclass(frozen=True)
+class HaloPublishResult:
+    success: bool
+    message: str
+    article_name: str = ""
+    snapshot_name: str = ""
+    status: str = ""
+    article_url: str = ""
+
+
+@dataclass(frozen=True)
+class NewsArticleDraft:
+    title: str
+    excerpt: str
+    tags: list[str]
+    body: str
+
+
+class HaloSyncPostClient:
+    def __init__(self, timeout: float = 30.0, trust_env: bool = False):
+        self._client = httpx.AsyncClient(timeout=timeout, trust_env=trust_env)
+
+    async def aclose(self):
+        await self._client.aclose()
+
+    async def publish_markdown(
+        self,
+        site_url: str,
+        token: str,
+        content: str,
+        *,
+        title: str = "",
+        slug: str = "",
+        excerpt: str = "",
+        tags: list[str] | None = None,
+        categories: list[str] | None = None,
+        publish: bool = True,
+    ) -> HaloPublishResult:
+        endpoint = self._article_endpoint(site_url)
+        payload: dict[str, Any] = {
+            "content": content,
+            "contentType": "markdown",
+            "publish": publish,
+        }
+        if title:
+            payload["title"] = title
+        if slug:
+            payload["slug"] = slug
+        if excerpt:
+            payload["excerpt"] = excerpt
+        if tags:
+            payload["tags"] = tags
+        if categories:
+            payload["categories"] = categories
+
+        response = await self._client.post(
+            endpoint,
+            headers={
+                "Content-Type": "application/json; charset=utf-8",
+                "X-SyncPost-Token": token,
+            },
+            json=payload,
+        )
+        response_text = response.text.strip()
+        if response.status_code >= 400:
+            raise HaloPublishError(
+                f"Halo SyncPostAI returned HTTP {response.status_code}: "
+                f"{response_text[:500]}"
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise HaloPublishError("Halo SyncPostAI returned non-JSON response") from exc
+
+        success = bool(data.get("success", True))
+        message = str(data.get("message") or "")
+        if not success:
+            raise HaloPublishError(message or "Halo SyncPostAI reported failure")
+
+        return HaloPublishResult(
+            success=success,
+            message=message,
+            article_name=str(data.get("articleName") or ""),
+            snapshot_name=str(data.get("snapshotName") or ""),
+            status=str(data.get("status") or ""),
+            article_url=str(data.get("articleUrl") or ""),
+        )
+
+    async def resolve_cover(self, value: str) -> str:
+        cover = value.strip()
+        if not cover:
+            return ""
+        if cover.startswith(("https://", "http://")):
+            try:
+                response = await self._client.head(cover, follow_redirects=True)
+                if response.status_code == 405:
+                    response = await self._client.get(
+                        cover,
+                        follow_redirects=True,
+                        headers={"Range": "bytes=0-0"},
+                    )
+                return cover if response.status_code < 400 else ""
+            except Exception:
+                return ""
+        return cover if Path(cover).exists() else ""
+
+    def _article_endpoint(self, site_url: str) -> str:
+        value = site_url.strip().rstrip("/")
+        if not value:
+            raise HaloPublishError("Halo site URL is empty")
+        if value.endswith(SYNCPOST_PATH):
+            return value
+        return value + SYNCPOST_PATH
 
 NEWS_SYNTHESIS_SYSTEM_PROMPT = f"""
 你是资深 AI 科技媒体主编、产业分析师和信息架构师。
@@ -363,6 +494,7 @@ class PulsePlugin(Star):
         self._tasks: list[asyncio.Task] = []
         self._epic_client = EpicGamesClient()
         self._news_client = AiNewsClient()
+        self._halo_client = HaloSyncPostClient()
         self._plugin_data_dir = (
             Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
         )
@@ -412,8 +544,17 @@ class PulsePlugin(Star):
     @pulse.command("news")
     async def pulse_news(self, event: AstrMessageEvent):
         """立即发送 AI 行业简报。"""
-        chain = await self._build_news_chain(event.unified_msg_origin)
+        chain, publish_message = await self._build_news_chain(event.unified_msg_origin)
         yield event.chain_result(chain)
+        if publish_message:
+            yield event.plain_result(publish_message)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("publish_news")
+    async def pulse_publish_news(self, event: AstrMessageEvent):
+        """将最近一篇 AI Markdown 长文发布到 Halo。"""
+        result = await self._publish_latest_news_to_halo()
+        yield event.plain_result(result)
 
     @pulse.command("now")
     async def pulse_now(self, event: AstrMessageEvent):
@@ -421,8 +562,11 @@ class PulsePlugin(Star):
         chain = []
         chain.extend(await self._build_epic_chain())
         chain.append(Comp.Plain("\n"))
-        chain.extend(await self._build_news_chain(event.unified_msg_origin))
+        news_chain, publish_message = await self._build_news_chain(event.unified_msg_origin)
+        chain.extend(news_chain)
         yield event.chain_result(chain)
+        if publish_message:
+            yield event.plain_result(publish_message)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("bind_epic")
@@ -494,6 +638,7 @@ class PulsePlugin(Star):
 
         await self._epic_client.aclose()
         await self._news_client.aclose()
+        await self._halo_client.aclose()
         logger.info("Pulse plugin stopped")
 
     async def _scheduled_loop(
@@ -532,7 +677,7 @@ class PulsePlugin(Star):
         self,
         job_name: str,
         targets: list[str],
-        chain_factory: Callable[[str], Awaitable[list]],
+        chain_factory: Callable[[str], Awaitable[list | tuple[list, str]]],
     ):
         if not targets:
             logger.warning(f"Pulse {job_name} has no targets; skip push")
@@ -546,8 +691,18 @@ class PulsePlugin(Star):
                 await asyncio.sleep(delay)
 
             try:
-                chain = await chain_factory(unified_msg_origin)
+                result = await chain_factory(unified_msg_origin)
+                if isinstance(result, tuple):
+                    chain, publish_message = result
+                else:
+                    chain = result
+                    publish_message = ""
                 await self.context.send_message(unified_msg_origin, chain)
+                if publish_message:
+                    await self.context.send_message(
+                        unified_msg_origin,
+                        [Comp.Plain(publish_message)],
+                    )
             except Exception as exc:
                 logger.error(
                     f"Pulse {job_name} push failed for {unified_msg_origin}: {exc}",
@@ -564,15 +719,16 @@ class PulsePlugin(Star):
             logger.error(f"Pulse failed to render Epic image: {exc}", exc_info=True)
             return self._format_epic_text(games, now)
 
-    async def _build_news_chain(self, unified_msg_origin: str) -> list:
+    async def _build_news_chain(self, unified_msg_origin: str) -> tuple[list, str]:
         now = datetime.now(self._timezone())
-        report = await self._fetch_ai_news(unified_msg_origin)
+        report, publish_message = await self._fetch_ai_news(unified_msg_origin)
         try:
             image_url = await self._render_news_image_url(report, now)
-            return [Comp.Image.fromURL(image_url)]
+            return [Comp.Image.fromURL(image_url)], publish_message
         except Exception as exc:
             logger.error(f"Pulse failed to render AI news image: {exc}", exc_info=True)
-            return self._format_news_text(report, now)
+            chain = self._format_news_text(report, now)
+            return chain, publish_message
 
     async def _fetch_epic_games(self, now: datetime) -> list[EpicFreeGame]:
         try:
@@ -581,10 +737,10 @@ class PulsePlugin(Star):
             logger.error(f"Pulse failed to fetch Epic games: {exc}", exc_info=True)
             return []
 
-    async def _fetch_ai_news(self, unified_msg_origin: str) -> str:
+    async def _fetch_ai_news(self, unified_msg_origin: str) -> tuple[str, str]:
         endpoint = str(self.config.get("news_endpoint", "")).strip()
         if not endpoint:
-            return "未配置 AI 新闻聚合接口。"
+            return "未配置 AI 新闻聚合接口。", ""
 
         try:
             bearer_token = str(self.config.get("news_bearer_token", "")).strip()
@@ -599,25 +755,27 @@ class PulsePlugin(Star):
                 )
                 items = self._fallback_text_to_items(source_text)
 
-            qq_brief, local_article = await self._synthesize_news_outputs(
+            qq_brief, article = await self._synthesize_news_outputs(
                 items,
                 unified_msg_origin,
             )
+            local_article = await self._build_article_markdown(article)
             saved_path = self._save_news_markdown(local_article)
             logger.info(f"Pulse AI news markdown saved: {saved_path}")
-            return qq_brief
+            publish_message = await self._publish_news_to_halo(local_article)
+            return qq_brief, publish_message
         except NewsSynthesisError as exc:
             logger.error(f"Pulse 生成 AI 新闻简报失败: {exc}", exc_info=True)
-            return "AI 新闻简报生成失败。"
+            return "AI 新闻简报生成失败。", ""
         except Exception as exc:
             logger.error(f"Pulse 获取 AI 新闻源失败: {exc}", exc_info=True)
-            return "AI 新闻源获取失败，请检查聚合接口配置。"
+            return "AI 新闻源获取失败，请检查聚合接口配置。", ""
 
     async def _synthesize_news_outputs(
         self,
         items: list[NewsItem],
         unified_msg_origin: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, NewsArticleDraft]:
         max_items = self._config_int("news_max_items", 15)
         selected_items = items[: max(1, max_items)]
         payload = self._news_items_payload(selected_items)
@@ -628,17 +786,231 @@ class PulsePlugin(Star):
         output = await self._llm_text(
             unified_msg_origin=unified_msg_origin,
             prompt=prompt,
-            system_prompt=NEWS_SYNTHESIS_SYSTEM_PROMPT,
+            system_prompt=self._news_system_prompt(),
         )
         qq_brief = self._strip_leading_icons(
             self._extract_tagged_section(output, QQ_BRIEF_START, QQ_BRIEF_END)
         )
-        local_article = self._extract_tagged_section(
-            output,
-            LOCAL_ARTICLE_START,
-            LOCAL_ARTICLE_END,
+        title = self._clean_single_line(
+            self._extract_tagged_section(output, ARTICLE_TITLE_START, ARTICLE_TITLE_END)
         )
-        return qq_brief, local_article
+        excerpt = self._clean_single_line(
+            self._extract_tagged_section(
+                output,
+                ARTICLE_EXCERPT_START,
+                ARTICLE_EXCERPT_END,
+            )
+        )
+        tags = self._parse_generated_tags(
+            self._extract_tagged_section(output, ARTICLE_TAGS_START, ARTICLE_TAGS_END)
+        )
+        body = self._strip_first_heading(
+            self._extract_tagged_section(
+                output,
+                LOCAL_ARTICLE_START,
+                LOCAL_ARTICLE_END,
+            )
+        )
+        if not title:
+            raise NewsSynthesisError("LLM 未输出文章标题")
+        if not excerpt:
+            raise NewsSynthesisError("LLM 未输出文章摘要")
+        if not body:
+            raise NewsSynthesisError("LLM 未输出文章正文")
+        article = NewsArticleDraft(
+            title=title,
+            excerpt=excerpt,
+            tags=tags,
+            body=body,
+        )
+        return qq_brief, article
+
+    def _news_system_prompt(self) -> str:
+        excerpt_min = self._config_int("halo_excerpt_min_chars", 120)
+        excerpt_max = self._config_int("halo_excerpt_max_chars", 180)
+        if excerpt_min < 20:
+            excerpt_min = 20
+        if excerpt_max < excerpt_min:
+            excerpt_max = excerpt_min
+
+        statement_rule = (
+            "文章末尾必须包含“## 声明”板块，并写明“本文由 AI 基于公开资讯自动生成，仅供信息参考，不构成投资、法律或技术决策建议。”"
+            if self._config_bool("article_statement_enabled", True)
+            else "文章末尾不要输出“声明”板块，也不要写 AI 生成声明。"
+        )
+
+        return f"""
+你是资深 AI 科技媒体主编、产业分析师和信息架构师。
+我会提供一个 JSON 数组，包含今日最多 15 条 AI 新闻、模型发布、论文和评测资讯。
+
+你必须基于这些材料一次性生成五个结果，并严格使用以下标签分隔：
+{QQ_BRIEF_START}/{QQ_BRIEF_END}
+{ARTICLE_TITLE_START}/{ARTICLE_TITLE_END}
+{ARTICLE_EXCERPT_START}/{ARTICLE_EXCERPT_END}
+{ARTICLE_TAGS_START}/{ARTICLE_TAGS_END}
+{LOCAL_ARTICLE_START}/{LOCAL_ARTICLE_END}
+
+任务一：QQ群推送简报
+- 面向移动端快速阅读。
+- 只输出 5-7 行，每行是一条独立、锋利、可扫读的一句话。
+- 不要在每行开头添加 emoji、图标、项目符号或装饰字符。
+- 不要贴原始 URL。
+
+任务二：网站文章元数据
+- 标题只输出在 {ARTICLE_TITLE_START}/{ARTICLE_TITLE_END} 中，不要在正文里写一级标题。
+- 摘要只输出在 {ARTICLE_EXCERPT_START}/{ARTICLE_EXCERPT_END} 中，长度控制在 {excerpt_min}-{excerpt_max} 个中文字符之间。
+- 标签只输出在 {ARTICLE_TAGS_START}/{ARTICLE_TAGS_END} 中，每行一个标签，输出 2-5 个中文或英文标签；不要带 #、逗号或项目符号。
+
+任务三：本地网站 Markdown 正文
+1. 正文严禁出现一级标题，也不要输出 YAML front matter；正文可以使用 Markdown 二级标题和三级标题。
+2. 严禁逐条罗列，必须把全部材料融合成一篇前后呼应的中文科技综述文章。
+3. 每一段在叙述事实的同时，都要自然织入行业透视和深度点评，分析篇幅至少占全文三分之一。
+4. 正文每个自然段开头使用两个全角空格缩进。
+5. 正文中可以提及媒体名、机构名、论文名或公司名，但不要直接粘贴 URL，也不要出现脚注标记。
+6. 文章末尾必须包含“## 参考文献”板块，用 Markdown 链接列出材料来源，格式为：- [媒体名称: 文章标题](URL)。
+7. {statement_rule}
+8. 正文控制在 1500-2200 个中文字符，内容必须紧凑、有判断，不要填充空话。
+
+严格输出结构：
+{QQ_BRIEF_START}
+一句话简报
+另一条重要趋势
+{QQ_BRIEF_END}
+
+{ARTICLE_TITLE_START}
+动态生成的科技媒体标题
+{ARTICLE_TITLE_END}
+
+{ARTICLE_EXCERPT_START}
+摘要内容
+{ARTICLE_EXCERPT_END}
+
+{ARTICLE_TAGS_START}
+AI
+大模型
+产业观察
+{ARTICLE_TAGS_END}
+
+{LOCAL_ARTICLE_START}
+　　正文自然段...
+
+## 自动生成的分析维度标题
+
+　　正文自然段...
+
+## 参考文献
+
+- [媒体名称: 文章标题](https://example.com)
+{LOCAL_ARTICLE_END}
+""".strip()
+
+    async def _build_article_markdown(self, article: NewsArticleDraft) -> str:
+        categories = self._config_string_list("halo_publish_categories")
+        configured_tags = self._config_string_list("halo_publish_tags")
+        tags = configured_tags or article.tags
+        front_matter = await self._article_front_matter(
+            title=article.title,
+            excerpt=article.excerpt,
+            categories=categories,
+            tags=tags,
+        )
+        body = self._strip_first_heading(article.body).strip()
+        return f"{front_matter}\n\n{body}\n"
+
+    async def _article_front_matter(
+        self,
+        *,
+        title: str,
+        excerpt: str,
+        categories: list[str],
+        tags: list[str],
+    ) -> str:
+        author = str(self.config.get("halo_article_author", "")).strip()
+        cover = await self._halo_client.resolve_cover(
+            str(self.config.get("halo_article_cover", "")).strip()
+        )
+        lines = [
+            "---",
+            f"title: {self._yaml_scalar(title)}",
+            f"auther: {self._yaml_scalar(author)}",
+            f"cover: {self._yaml_scalar(cover)}",
+            f"excerpt: {self._yaml_scalar(excerpt)}",
+            "categories:",
+        ]
+        lines.extend(f" - {self._yaml_scalar(category)}" for category in categories)
+        lines.append("tags:")
+        lines.extend(f" - {self._yaml_scalar(tag)}" for tag in tags)
+        lines.append("---")
+        return "\n".join(lines)
+
+    def _parse_generated_tags(self, value: str) -> list[str]:
+        tags: list[str] = []
+        for line in value.replace(",", "\n").replace("，", "\n").splitlines():
+            tag = line.strip().lstrip("-*#").strip()
+            if tag and tag not in tags:
+                tags.append(tag)
+        return tags[:5]
+
+    def _strip_first_heading(self, markdown_text: str) -> str:
+        lines: list[str] = []
+        for line in markdown_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                continue
+            lines.append(line)
+        return "\n".join(lines).strip()
+
+    def _clean_single_line(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value.strip()).strip(" -#")
+
+    def _yaml_scalar(self, value: str) -> str:
+        text = str(value).replace("\r", " ").replace("\n", " ").strip()
+        if not text:
+            return ""
+        if re.search(r"[:#\[\]{},&*!|>'\"%@`]|^[-?]", text):
+            return json.dumps(text, ensure_ascii=False)
+        return text
+
+    def _front_matter_text(self, markdown_text: str) -> str:
+        text = markdown_text.lstrip()
+        if not text.startswith("---"):
+            return ""
+        match = re.match(r"^---\s*\n(.*?)\n---\s*", text, flags=re.DOTALL)
+        return match.group(1) if match else ""
+
+    def _front_matter_value(self, markdown_text: str, key: str) -> str:
+        front_matter = self._front_matter_text(markdown_text)
+        if not front_matter:
+            return ""
+        match = re.search(rf"^{re.escape(key)}:\s*(.*)$", front_matter, flags=re.MULTILINE)
+        if not match:
+            return ""
+        return self._unquote_yaml_scalar(match.group(1).strip())
+
+    def _front_matter_list(self, markdown_text: str, key: str) -> list[str]:
+        front_matter = self._front_matter_text(markdown_text)
+        if not front_matter:
+            return []
+        pattern = rf"^{re.escape(key)}:\s*\n((?:\s+-\s+.*\n?)*)"
+        match = re.search(pattern, front_matter, flags=re.MULTILINE)
+        if not match:
+            return []
+        values: list[str] = []
+        for line in match.group(1).splitlines():
+            item = re.sub(r"^\s+-\s+", "", line).strip()
+            if item:
+                values.append(self._unquote_yaml_scalar(item))
+        return values
+
+    def _unquote_yaml_scalar(self, value: str) -> str:
+        if not value:
+            return ""
+        if len(value) >= 2 and value[0] == value[-1] == '"':
+            try:
+                return str(json.loads(value))
+            except json.JSONDecodeError:
+                return value[1:-1]
+        return value
 
     async def _llm_text(
         self,
@@ -728,6 +1100,117 @@ class PulsePlugin(Star):
         path = self._plugin_data_dir / f"ai-news-{date_text}.md"
         path.write_text(markdown_text, encoding="utf-8")
         return path
+
+    async def _publish_latest_news_to_halo(self) -> str:
+        latest_path = self._latest_news_markdown_path()
+        if not latest_path:
+            return "未找到本地 AI 长文 Markdown，请先执行 /pulse news 生成文章。"
+
+        markdown_text = latest_path.read_text(encoding="utf-8").strip()
+        if not markdown_text:
+            return f"本地 Markdown 为空：{latest_path}"
+
+        result = await self._publish_news_to_halo(markdown_text, force=True)
+        return result or "Halo 发布未启用或配置不完整。"
+
+    async def _publish_news_to_halo(
+        self,
+        markdown_text: str,
+        *,
+        force: bool = False,
+    ) -> str:
+        if not force and not self._config_bool("halo_publish_enabled", False):
+            return ""
+
+        site_url = str(self.config.get("halo_site_url", "")).strip()
+        token = str(self.config.get("halo_syncpost_token", "")).strip()
+        if not site_url or not token:
+            message = "Halo 发布配置不完整：请填写 halo_site_url 和 halo_syncpost_token。"
+            if force:
+                return message
+            logger.warning(f"Pulse {message}")
+            return ""
+
+        now = datetime.now(self._timezone())
+        title = self._front_matter_value(markdown_text, "title") or self._extract_markdown_title(markdown_text)
+        slug = self._halo_article_slug(now)
+        excerpt = self._front_matter_value(markdown_text, "excerpt") or self._markdown_excerpt(markdown_text)
+        tags = self._front_matter_list(markdown_text, "tags") or self._config_string_list("halo_publish_tags")
+        categories = self._front_matter_list(markdown_text, "categories") or self._config_string_list("halo_publish_categories")
+        publish = self._config_bool("halo_publish_direct", True)
+
+        try:
+            result = await self._halo_client.publish_markdown(
+                site_url,
+                token,
+                markdown_text,
+                title=title,
+                slug=slug,
+                excerpt=excerpt,
+                tags=tags,
+                categories=categories,
+                publish=publish,
+            )
+        except HaloPublishError as exc:
+            message = f"Halo 发布失败：{exc}"
+            logger.error(f"Pulse {message}", exc_info=True)
+            return message if force else ""
+        except Exception as exc:
+            message = f"Halo 发布异常：{exc}"
+            logger.error(f"Pulse {message}", exc_info=True)
+            return message if force else ""
+
+        status = result.status or ("published" if publish else "draft")
+        article_name = result.article_name or slug
+        article_url = result.article_url or self._halo_article_url(site_url, article_name)
+        if article_url:
+            message = f"文章已推送到：{article_url}"
+        else:
+            message = f"Halo 发布成功：{article_name} ({status})"
+        logger.info(f"Pulse {message}")
+        return message
+
+    def _latest_news_markdown_path(self) -> Path | None:
+        if not self._plugin_data_dir.exists():
+            return None
+        paths = sorted(self._plugin_data_dir.glob("ai-news-*.md"), reverse=True)
+        return paths[0] if paths else None
+
+    def _halo_article_slug(self, now: datetime) -> str:
+        prefix = str(self.config.get("halo_slug_prefix", "ai-news")).strip()
+        prefix = re.sub(r"[^a-zA-Z0-9_-]+", "-", prefix).strip("-")
+        if not prefix:
+            prefix = "ai-news"
+        return f"{prefix}-{now:%Y%m%d}"
+
+    def _halo_article_url(self, site_url: str, article_name: str) -> str:
+        name = article_name.strip().strip("/")
+        if not name:
+            return ""
+        base_url = site_url.strip().rstrip("/")
+        if base_url.endswith(SYNCPOST_PATH):
+            base_url = base_url[: -len(SYNCPOST_PATH)].rstrip("/")
+        if not base_url.startswith(("https://", "http://")):
+            return ""
+        return f"{base_url}/archives/{name}"
+
+    def _extract_markdown_title(self, markdown_text: str) -> str:
+        for line in markdown_text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("# ") and not stripped.startswith("## "):
+                return stripped[2:].strip()
+        return ""
+
+    def _markdown_excerpt(self, markdown_text: str, max_chars: int = 160) -> str:
+        for line in markdown_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            stripped = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", stripped)
+            stripped = re.sub(r"[*_`>#-]+", "", stripped).strip()
+            if stripped:
+                return stripped[:max_chars]
+        return ""
 
     async def _render_epic_image_url(
         self,
@@ -1005,3 +1488,11 @@ class PulsePlugin(Star):
             return float(self.config.get(key, default))
         except (TypeError, ValueError):
             return default
+
+    def _config_string_list(self, key: str) -> list[str]:
+        value = self.config.get(key, [])
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []

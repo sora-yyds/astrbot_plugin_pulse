@@ -83,5 +83,77 @@
     "type": "int",
     "hint": "会一次性交给 LLM 生成 QQ 简报和本地 Markdown 长文，建议不超过 15。",
     "default": 15
+  },
+  "halo_publish_enabled": {
+    "description": "启用 Halo 文章发布",
+    "type": "bool",
+    "hint": "开启后，AI 长文生成成功时会自动推送到 Halo SyncPostAI 插件。",
+    "default": false
+  },
+  "halo_site_url": {
+    "description": "Halo 站点地址",
+    "type": "string",
+    "hint": "例如 https://blog.example.com，也可以填写完整 SyncPostAI articles 接口地址。",
+    "default": ""
+  },
+  "halo_syncpost_token": {
+    "description": "Halo SyncPostAI Token",
+    "type": "string",
+    "hint": "对应 SyncPostAI 插件请求头 X-SyncPost-Token，请勿公开。",
+    "default": ""
+  },
+  "halo_publish_direct": {
+    "description": "Halo 文章直接发布",
+    "type": "bool",
+    "hint": "关闭时按草稿/未发布方式提交，具体状态取决于 SyncPostAI 插件配置。",
+    "default": true
+  },
+  "article_statement_enabled": {
+    "description": "启用文章底部声明",
+    "type": "bool",
+    "hint": "开启后，生成的 Markdown 正文末尾会包含 AI 生成声明。",
+    "default": true
+  },
+  "halo_article_author": {
+    "description": "Halo 文章作者",
+    "type": "string",
+    "hint": "写入 Markdown 顶部 auther 字段，例如 admin。",
+    "default": "admin"
+  },
+  "halo_article_cover": {
+    "description": "Halo 文章封面",
+    "type": "string",
+    "hint": "可填写网络图片地址或本地路径；网络不可访问或本地不存在时会留空。",
+    "default": ""
+  },
+  "halo_excerpt_min_chars": {
+    "description": "文章摘要最少字数",
+    "type": "int",
+    "hint": "AI 生成 excerpt 的最小中文字符数。",
+    "default": 120
+  },
+  "halo_excerpt_max_chars": {
+    "description": "文章摘要最多字数",
+    "type": "int",
+    "hint": "AI 生成 excerpt 的最大中文字符数。",
+    "default": 180
+  },
+  "halo_slug_prefix": {
+    "description": "Halo 文章别名前缀",
+    "type": "string",
+    "hint": "最终 slug 形如 ai-news-20260624。",
+    "default": "ai-news"
+  },
+  "halo_publish_tags": {
+    "description": "Halo 默认标签",
+    "type": "list",
+    "hint": "发布到 Halo 时附加的标签；留空时由 AI 根据文章内容自动生成。",
+    "default": []
+  },
+  "halo_publish_categories": {
+    "description": "Halo 默认分类",
+    "type": "list",
+    "hint": "发布到 Halo 时附加的分类，不存在时由 SyncPostAI 自动创建。",
+    "default": ["AI 行业简报"]
   }
 }

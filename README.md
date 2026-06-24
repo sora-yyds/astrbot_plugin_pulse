@@ -78,6 +78,7 @@ pip install -r requirements.txt
 
 - `/pulse epic`：立即发送 Epic 免费游戏。
 - `/pulse news`：立即发送 AI 行业简报。
+- `/pulse publish_news`：将最近生成的 AI Markdown 长文手动发布到 Halo。
 - `/pulse now`：立即发送两个模块。
 - `/pulse bind_epic`：将当前会话绑定到 Epic 定时推送。
 - `/pulse bind_news`：将当前会话绑定到 AI 简报定时推送。
@@ -102,6 +103,18 @@ pip install -r requirements.txt
 - `news_endpoint`：已部署的 Cloudflare Worker 地址。
 - `news_bearer_token`：与 Worker `SECRET_TOKEN` 一致的 Token。
 - `news_max_items`：AI 简报最多处理资讯数，建议不超过 `15`。
+- `halo_publish_enabled`：启用 AI 长文自动发布到 Halo。
+- `halo_site_url`：Halo 站点地址，例如 `https://blog.example.com`。
+- `halo_syncpost_token`：SyncPostAI 插件中配置的推送 Token。
+- `halo_publish_direct`：是否直接发布文章，默认 `true`。
+- `article_statement_enabled`：是否在文章底部添加 AI 生成声明。
+- `halo_article_author`：写入 Markdown 顶部 `auther` 字段的作者名。
+- `halo_article_cover`：写入 Markdown 顶部 `cover` 字段的封面图，支持网络地址或本地路径，获取不到时留空。
+- `halo_excerpt_min_chars`：AI 生成摘要的最少字数。
+- `halo_excerpt_max_chars`：AI 生成摘要的最多字数。
+- `halo_slug_prefix`：Halo 文章 slug 前缀，默认生成 `ai-news-YYYYMMDD`。
+- `halo_publish_tags`：发布到 Halo 时附加的默认标签；留空时由 AI 自动生成。
+- `halo_publish_categories`：发布到 Halo 时附加的默认分类。
 - `push_delay_min_seconds`：向下一个目标会话发送前的最小随机延迟。
 - `push_delay_max_seconds`：向下一个目标会话发送前的最大随机延迟。
 
@@ -136,6 +149,35 @@ data/plugin_data/astrbot_plugin_pulse/ai-news-YYYY-MM-DD.md
 ```
 
 该文件用于后续发布到网站；群聊推送只发送适合快速阅读的一句话摘要图片。
+
+如果启用了 `halo_publish_enabled`，插件会在生成 Markdown 后调用 Halo SyncPostAI：
+
+```http
+POST /apis/api.starter.halo.run/v1alpha1/articles
+Content-Type: application/json; charset=utf-8
+X-SyncPost-Token: <halo_syncpost_token>
+```
+
+生成的 Markdown 顶部会写入 front matter，正文不再包含一级标题；标题、摘要、分类和标签也会作为
+SyncPostAI 的 JSON 字段提交。slug 默认是 `ai-news-YYYYMMDD`。也可以用 `/pulse publish_news`
+将本地最近一篇长文重新发布到 Halo，用于验证站点地址、Token、分类和标签配置。
+
+front matter 示例：
+
+```yaml
+---
+title: Ubuntu 22.04安装docker和docker-compose
+auther: admin
+cover: https://cdn.s-o-r-a.top/web_picture/docker-vector-logo-big.png
+excerpt: 安装Docker 正常情况通过以下命令就可以安装Docker sudo apt install docker-ce docker-ce-cli containerd.io
+categories:
+ - technologysharing
+tags:
+ - 技术分享
+ - docker
+ - docker-compose
+---
+```
 
 ## 发布注意事项
 
