@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Pulse Murasame Style Debug</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --ink: #332c3f;
+      --muted: #7a6f89;
+      --plum: #6e4f8f;
+      --plum-deep: #3d2c5a;
+      --wisteria: #b99adb;
+      --sakura: #f4a9bd;
+      --paper: #fff9f1;
+      --paper-soft: #fffdf8;
+      --gold: #c59445;
+      --line: rgba(110, 79, 143, .18);
+      --shadow: 0 28px 70px rgba(61, 44, 90, .20);
+    }
+
+    body {
+      margin: 0;
+      width: 100vw;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(244, 169, 189, .38), transparent 30%),
+        radial-gradient(circle at 90% 8%, rgba(185, 154, 219, .45), transparent 28%),
+        linear-gradient(135deg, #f7e8ef 0%, #efe5fa 38%, #f8f0df 100%);
+      color: var(--ink);
+      font-family:
+        "Noto Serif SC",
+        "Source Han Serif SC",
+        "Microsoft YaHei",
+        "PingFang SC",
+        serif;
+      letter-spacing: 0;
+    }
+
+    .debug-stage {
+      width: 1280px;
+      min-height: 900px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      min-width: 960px;
+      min-height: 900px;
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(255, 249, 241, .94));
+      background-size: 34px 34px, 34px 34px, auto;
+      box-shadow: var(--shadow);
+    }
+
+    .pulse-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, .75) 0 3px, transparent 4px),
+        radial-gradient(circle at 18% 82%, rgba(255, 255, 255, .55) 0 2px, transparent 3px),
+        radial-gradient(circle at 88% 68%, rgba(255, 255, 255, .65) 0 3px, transparent 4px),
+        linear-gradient(135deg, rgba(255, 255, 255, .42), transparent 34%, rgba(255, 255, 255, .36));
+    }
+
+    .header {
+      position: relative;
+      padding: 28px 32px 28px 36px;
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(61, 44, 90, .96), rgba(112, 82, 145, .95) 48%, rgba(184, 112, 151, .94)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .09) 0 1px, transparent 1px 18px);
+    }
+
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 86% 26%, rgba(255, 255, 255, .22), transparent 22%),
+        linear-gradient(90deg, transparent 0 70%, rgba(255, 244, 205, .16));
+      pointer-events: none;
+    }
+
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -11px;
+      height: 22px;
+      background:
+        radial-gradient(circle at 12px 11px, var(--paper) 0 10px, transparent 11px) 0 0 / 30px 22px repeat-x;
+    }
+
+    .brand-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr) 270px;
+      align-items: center;
+      gap: 18px;
+      z-index: 1;
+    }
+
+    .crest {
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border: 2px solid rgba(255, 244, 205, .88);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, rgba(255, 255, 255, .18), transparent 58%),
+        rgba(255, 255, 255, .08);
+      box-shadow:
+        inset 0 0 0 7px rgba(255, 255, 255, .08),
+        0 0 0 1px rgba(255, 255, 255, .18);
+    }
+
+    .crest::before,
+    .crest::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+    }
+
+    .crest::before {
+      width: 22px;
+      height: 22px;
+      border: 2px solid rgba(255, 244, 205, .86);
+    }
+
+    .crest::after {
+      width: 7px;
+      height: 7px;
+      background: #ffe9a8;
+      box-shadow: 0 0 14px rgba(255, 233, 168, .9);
+    }
+
+    .kicker {
+      margin-bottom: 6px;
+      color: rgba(255, 244, 225, .82);
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .title {
+      margin: 0;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 46px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 2px;
+    }
+
+    .subtitle {
+      margin-left: 4px;
+      color: rgba(255, 244, 225, .88);
+      font-size: 24px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .date-strip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1;
+      margin-top: 16px;
+      padding: 8px 15px;
+      border: 1px solid rgba(255, 244, 205, .54);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      color: rgba(255, 248, 236, .95);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 19px;
+      font-weight: 650;
+    }
+
+    .date-strip::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ffd98a;
+      box-shadow: 0 0 16px rgba(255, 217, 138, .95);
+    }
+
+    .sticker-img {
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 12px 20px rgba(61, 44, 90, .22));
+    }
+
+    .sticker-img.header-sticker {
+      width: 230px;
+      height: 154px;
+      justify-self: end;
+      align-self: end;
+      margin-bottom: -10px;
+    }
+
+    .sticker-img.side-sticker {
+      position: absolute;
+      left: -20px;
+      bottom: 18px;
+      width: 120px;
+      height: 120px;
+    }
+
+    .sticker-img.inline-sticker {
+      width: 220px;
+      height: 166px;
+      flex: 0 0 auto;
+    }
+
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 82px 1fr;
+      gap: 20px;
+      padding: 42px 34px 42px 32px;
+    }
+
+    .side-ribbon {
+      position: relative;
+      min-height: 650px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 244, 248, .78)),
+        linear-gradient(180deg, var(--sakura), var(--wisteria));
+      border: 1px solid rgba(185, 154, 219, .42);
+      box-shadow: inset 0 0 0 6px rgba(255, 255, 255, .45);
+    }
+
+    .side-ribbon-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--plum-deep);
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 800;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    .news-board {
+      position: relative;
+      padding: 26px 28px 30px;
+      border: 1px solid rgba(110, 79, 143, .16);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 253, 248, .94), rgba(255, 249, 241, .88)),
+        var(--paper-soft);
+      box-shadow: 0 18px 45px rgba(92, 67, 123, .12);
+    }
+
+    .board-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding: 0 6px 18px;
+      border-bottom: 1px dashed rgba(110, 79, 143, .28);
+    }
+
+    .board-title {
+      margin: 0;
+      color: var(--plum-deep);
+      font-size: 30px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+
+    .board-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.5;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+    }
+
+    .news-list {
+      display: grid;
+      gap: 16px;
+    }
+
+    .news-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 16px;
+      padding: 20px 22px 20px 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .74), rgba(255, 250, 244, .62)),
+        linear-gradient(90deg, rgba(244, 169, 189, .12), transparent 34%);
+    }
+
+    .item-index {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 34% 28%, #fff 0 16%, transparent 18%),
+        linear-gradient(135deg, var(--sakura), var(--wisteria));
+      color: #fff;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 21px;
+      font-weight: 900;
+      box-shadow: 0 8px 22px rgba(110, 79, 143, .22);
+    }
+
+    .item-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+    }
+
+    .tag {
+      padding: 4px 9px;
+      border: 1px solid rgba(197, 148, 69, .34);
+      border-radius: 999px;
+      background: rgba(255, 244, 205, .52);
+      color: #8a642a;
+    }
+
+    .item-title {
+      margin: 0 0 8px;
+      color: var(--plum-deep);
+      font-size: 26px;
+      line-height: 1.32;
+      font-weight: 900;
+    }
+
+    .item-summary {
+      margin: 0;
+      color: var(--ink);
+      font-size: 24px;
+      line-height: 1.64;
+      text-align: justify;
+      word-break: break-word;
+    }
+
+    .footer-note {
+      display: block;
+      margin-top: 26px;
+      padding: 20px 8px 0;
+      border-top: 1px dashed rgba(110, 79, 143, .28);
+      color: var(--muted);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 18px;
+    }
+
+    .petals {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .petal {
+      position: absolute;
+      width: 22px;
+      height: 14px;
+      border-radius: 70% 30% 70% 30%;
+      background: rgba(244, 169, 189, .58);
+      transform: rotate(var(--r));
+      filter: blur(.1px);
+    }
+
+    .petal:nth-child(1) { left: 102px; top: 186px; --r: 28deg; }
+    .petal:nth-child(2) { right: 160px; top: 258px; --r: -18deg; }
+    .petal:nth-child(3) { right: 68px; top: 560px; --r: 36deg; opacity: .7; }
+    .petal:nth-child(4) { left: 164px; bottom: 118px; --r: -32deg; opacity: .62; }
+    .petal:nth-child(5) { right: 302px; bottom: 74px; --r: 12deg; opacity: .5; }
+
+    @media (min-width: 1120px) {
+      .content-wrap {
+        grid-template-columns: 82px 1fr;
+        padding-right: 46px;
+      }
+
+      .news-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+      }
+
+      .news-item {
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: 14px;
+        padding: 18px 18px 18px 16px;
+      }
+
+      .item-index {
+        width: 46px;
+        height: 46px;
+        font-size: 19px;
+      }
+
+      .item-meta {
+        font-size: 15px;
+        gap: 8px;
+      }
+
+      .tag {
+        padding: 3px 8px;
+      }
+
+      .item-title {
+        font-size: 23px;
+        line-height: 1.28;
+      }
+
+      .item-summary {
+        font-size: 21px;
+        line-height: 1.55;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="debug-stage">
+    <section class="pulse-card" aria-label="AI Pulse anime style preview">
+      <div class="header">
+        <div class="brand-row">
+          <div class="crest" aria-hidden="true"></div>
+          <div class="title-group">
+            <div class="kicker">Yuzusoft Shrine Intelligence Bulletin</div>
+            <h1 class="title">AI PULSE <span class="subtitle">每日科技前沿观察</span></h1>
+          </div>
+          <img class="sticker-img header-sticker" src="../imgs/开心.png" alt="丛雨酱开心表情" />
+        </div>
+        <div class="date-strip">2026-06-24</div>
+      </div>
+
+      <div class="content-wrap">
+        <aside class="side-ribbon" aria-hidden="true">
+          <div class="side-ribbon-label"><span>丛</span><span>雨</span><span>通</span><span>讯</span></div>
+          <img class="sticker-img side-sticker" src="../imgs/趴着.png" alt="丛雨酱趴着表情" />
+        </aside>
+
+        <article class="news-board">
+          <header class="board-heading">
+            <div>
+              <h2 class="board-title">今日 AI 资讯摘要</h2>
+              <p class="board-subtitle">每一条对应不同资讯来源或主题聚合，保持独立阅读，不混成一篇长文。</p>
+            </div>
+            <img class="sticker-img inline-sticker" src="../imgs/写作.png" alt="丛雨酱写作表情" />
+          </header>
+
+          <div class="news-list">
+            <section class="news-item">
+              <div class="item-index">01</div>
+              <div>
+                <div class="item-meta"><span class="tag">Agent</span><span>企业协作</span></div>
+                <h3 class="item-title">AI Agent 正从聊天助手变成企业基础设施</h3>
+                <p class="item-summary">Anthropic 抢 Slack 语境，MoEngage 抢每个客户的营销触点。企业级 AI 的入口正在从单次问答转向工作流、权限和上下文管理。</p>
+              </div>
+            </section>
+
+            <section class="news-item">
+              <div class="item-index">02</div>
+              <div>
+                <div class="item-meta"><span class="tag">Research</span><span>可信模型</span></div>
+                <h3 class="item-title">大模型能力之外，证据、隐私和文化理解开始成为硬指标</h3>
+                <p class="item-summary">今天多篇论文同时指向同一个问题：模型会回答，但未必有证据、守隐私、懂文化、能反思。产品竞争正在从参数规模转向可验证的执行过程。</p>
+              </div>
+            </section>
+
+            <section class="news-item">
+              <div class="item-index">03</div>
+              <div>
+                <div class="item-meta"><span class="tag">OCR</span><span>文档智能</span></div>
+                <h3 class="item-title">百度开源长程 OCR，文档智能进入长上下文解析阶段</h3>
+                <p class="item-summary">长文档处理的重点不再只是识别准确率，而是能否把合同、论文、工单和聊天记录稳定拼成可检索、可追溯的知识链。</p>
+              </div>
+            </section>
+
+            <section class="news-item">
+              <div class="item-index">04</div>
+              <div>
+                <div class="item-meta"><span class="tag">Video</span><span>4D 重建</span></div>
+                <h3 class="item-title">生成式视频继续靠近工业化视觉流程</h3>
+                <p class="item-summary">Vera 和 Lift4D 显示生成式视觉正在逼近可编辑、可还原的工作流。它不再只是生成一段好看的视频，而是进入设计、仿真、广告和游戏资产迭代。</p>
+              </div>
+            </section>
+
+            <section class="news-item">
+              <div class="item-index">05</div>
+              <div>
+                <div class="item-meta"><span class="tag">LLM</span><span>长期任务</span></div>
+                <h3 class="item-title">Agent 的“过早承诺”被系统诊断</h3>
+                <p class="item-summary">长期任务失败的根源开始从提示词问题转向认知轨迹问题。企业 AI 下一轮竞争，不是模型参数，而是谁能安全占有组织记忆、用户记忆和场景数据。</p>
+              </div>
+            </section>
+          </div>
+
+          <div class="footer-note">
+            <span>AI 基于公开资讯自动生成，仅供信息参考</span>
+          </div>
+        </article>
+      </div>
+
+      <div class="petals" aria-hidden="true">
+        <i class="petal"></i>
+        <i class="petal"></i>
+        <i class="petal"></i>
+        <i class="petal"></i>
+        <i class="petal"></i>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

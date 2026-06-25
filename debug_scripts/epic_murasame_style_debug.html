@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Epic Free Games Murasame Style Debug</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    :root {
+      --ink: #332c3f;
+      --muted: #7a6f89;
+      --plum: #6e4f8f;
+      --plum-deep: #3d2c5a;
+      --wisteria: #b99adb;
+      --sakura: #f4a9bd;
+      --paper: #fff9f1;
+      --paper-soft: #fffdf8;
+      --gold: #c59445;
+      --line: rgba(110, 79, 143, .18);
+      --shadow: 0 28px 70px rgba(61, 44, 90, .20);
+    }
+
+    body {
+      margin: 0;
+      width: 100vw;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(244, 169, 189, .38), transparent 30%),
+        radial-gradient(circle at 90% 8%, rgba(185, 154, 219, .45), transparent 28%),
+        linear-gradient(135deg, #f7e8ef 0%, #efe5fa 38%, #f8f0df 100%);
+      color: var(--ink);
+      font-family:
+        "Noto Serif SC",
+        "Source Han Serif SC",
+        "Microsoft YaHei",
+        "PingFang SC",
+        serif;
+      letter-spacing: 0;
+    }
+
+    .debug-stage {
+      width: 1280px;
+      min-height: 720px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100%;
+      min-width: 960px;
+      min-height: 680px;
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(255, 249, 241, .94));
+      background-size: 34px 34px, 34px 34px, auto;
+      box-shadow: var(--shadow);
+    }
+
+    .pulse-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, .75) 0 3px, transparent 4px),
+        radial-gradient(circle at 88% 68%, rgba(255, 255, 255, .65) 0 3px, transparent 4px),
+        linear-gradient(135deg, rgba(255, 255, 255, .42), transparent 34%, rgba(255, 255, 255, .36));
+    }
+
+    .header {
+      position: relative;
+      padding: 28px 36px 30px;
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(61, 44, 90, .96), rgba(112, 82, 145, .95) 48%, rgba(184, 112, 151, .94)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .09) 0 1px, transparent 1px 18px);
+    }
+
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 82% 20%, rgba(255, 255, 255, .23), transparent 24%),
+        linear-gradient(90deg, transparent 0 68%, rgba(255, 244, 205, .16));
+      pointer-events: none;
+    }
+
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -11px;
+      height: 22px;
+      background: radial-gradient(circle at 12px 11px, var(--paper) 0 10px, transparent 11px) 0 0 / 30px 22px repeat-x;
+    }
+
+    .brand-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 270px;
+      align-items: center;
+      gap: 18px;
+    }
+
+    .kicker {
+      margin-bottom: 8px;
+      color: rgba(255, 244, 225, .84);
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .title {
+      display: flex;
+      align-items: baseline;
+      gap: 18px;
+      margin: 0;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 54px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+
+    .title span {
+      color: rgba(255, 244, 225, .9);
+      font-size: 32px;
+      font-weight: 800;
+    }
+
+    .date-strip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1;
+      margin-top: 18px;
+      padding: 8px 15px;
+      border: 1px solid rgba(255, 244, 205, .54);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      color: rgba(255, 248, 236, .95);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 20px;
+      font-weight: 750;
+    }
+
+    .date-strip::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ffd98a;
+      box-shadow: 0 0 16px rgba(255, 217, 138, .95);
+    }
+
+    .sticker-img {
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 14px 22px rgba(61, 44, 90, .24));
+    }
+
+    .header-sticker {
+      width: 260px;
+      height: 188px;
+      justify-self: end;
+      align-self: end;
+      margin-bottom: -10px;
+    }
+
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 20px;
+      padding: 48px 42px 42px 34px;
+    }
+
+    .side-ribbon {
+      position: relative;
+      min-height: 420px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 244, 248, .78)),
+        linear-gradient(180deg, var(--sakura), var(--wisteria));
+      border: 1px solid rgba(185, 154, 219, .42);
+      box-shadow: inset 0 0 0 6px rgba(255, 255, 255, .45);
+    }
+
+    .side-ribbon-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--plum-deep);
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 800;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+
+    .side-sticker {
+      position: absolute;
+      left: -22px;
+      bottom: 12px;
+      width: 124px;
+      height: 124px;
+    }
+
+    .games-board {
+      position: relative;
+      padding: 26px 28px 30px;
+      border: 1px solid rgba(110, 79, 143, .16);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 253, 248, .94), rgba(255, 249, 241, .88)), var(--paper-soft);
+      box-shadow: 0 18px 45px rgba(92, 67, 123, .12);
+    }
+
+    .board-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 22px;
+      padding: 0 6px 18px;
+      border-bottom: 1px dashed rgba(110, 79, 143, .28);
+    }
+
+    .board-title {
+      margin: 0;
+      color: var(--plum-deep);
+      font-size: 32px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+
+    .board-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.5;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+    }
+
+    .inline-sticker {
+      width: 220px;
+      height: 166px;
+      flex: 0 0 auto;
+    }
+
+    .games {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .game {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .74), rgba(255, 250, 244, .62)),
+        linear-gradient(90deg, rgba(244, 169, 189, .12), transparent 34%);
+      box-shadow: 0 10px 26px rgba(92, 67, 123, .10);
+    }
+
+    .cover-box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #ede4f4;
+    }
+
+    .cover {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .cover-box::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, transparent 52%, rgba(61, 44, 90, .46)),
+        radial-gradient(circle at 82% 18%, rgba(255, 255, 255, .28), transparent 22%);
+      pointer-events: none;
+    }
+
+    .game-body {
+      padding: 20px 22px 22px;
+    }
+
+    .game-title {
+      margin: 0 0 14px;
+      color: var(--plum-deep);
+      font-size: 30px;
+      line-height: 1.24;
+      font-weight: 900;
+    }
+
+    .meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border: 1px solid rgba(197, 148, 69, .34);
+      border-radius: 999px;
+      background: rgba(255, 244, 205, .58);
+      color: #8a642a;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+    }
+
+    .meta::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 12px rgba(197, 148, 69, .75);
+    }
+
+    .empty {
+      padding: 28px;
+      border: 1px dashed rgba(110, 79, 143, .28);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .58);
+      color: var(--muted);
+      font-size: 26px;
+      line-height: 1.6;
+    }
+
+    .footer-note {
+      display: block;
+      margin-top: 24px;
+      padding: 18px 8px 0;
+      border-top: 1px dashed rgba(110, 79, 143, .28);
+      color: var(--muted);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 18px;
+    }
+
+    .petals {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+
+    .petal {
+      position: absolute;
+      width: 22px;
+      height: 14px;
+      border-radius: 70% 30% 70% 30%;
+      background: rgba(244, 169, 189, .58);
+      transform: rotate(var(--r));
+      filter: blur(.1px);
+    }
+
+    .petal:nth-child(1) { left: 102px; top: 186px; --r: 28deg; }
+    .petal:nth-child(2) { right: 160px; top: 258px; --r: -18deg; }
+    .petal:nth-child(3) { right: 68px; top: 560px; --r: 36deg; opacity: .7; }
+    .petal:nth-child(4) { left: 164px; bottom: 118px; --r: -32deg; opacity: .62; }
+  </style>
+</head>
+<body>
+  <main class="debug-stage">
+    <section class="pulse-card" aria-label="Epic free games anime style preview">
+      <div class="header">
+        <div class="brand-row">
+          <div>
+            <div class="kicker">Yuzusoft Shrine Game Dispatch</div>
+            <h1 class="title">EPIC PULSE <span>限时免费游戏</span></h1>
+          </div>
+          <img class="sticker-img header-sticker" src="../imgs/看这里.png" alt="丛雨酱看这里表情" />
+        </div>
+        <div class="date-strip">2026-06-25</div>
+      </div>
+
+      <div class="content-wrap">
+        <aside class="side-ribbon" aria-hidden="true">
+          <div class="side-ribbon-label"><span>今</span><span>日</span><span>免</span><span>费</span></div>
+          <img class="sticker-img side-sticker" src="../imgs/趴着.png" alt="丛雨酱趴着表情" />
+        </aside>
+
+        <article class="games-board">
+          <header class="board-heading">
+            <div>
+              <h2 class="board-title">今日可领取游戏</h2>
+              <p class="board-subtitle">丛雨酱提醒：入库不亏，过期就只能等下次缘分。</p>
+            </div>
+            <img class="sticker-img inline-sticker" src="../imgs/玩游戏.png" alt="丛雨酱玩游戏表情" />
+          </header>
+
+          <div class="games">
+            <section class="game">
+              <div class="cover-box">
+                <img class="cover" src="https://cdn1.epicgames.com/offer/9c203b6ed35846e8a4a9ff1e314f6593/EGS_Robobeat_SimonFredholm_S1_2560x1440-3e9ab99eb51237f0ac9aa5d5d85cc337" alt="ROBOBEAT" />
+              </div>
+              <div class="game-body">
+                <h3 class="game-title">ROBOBEAT</h3>
+                <div class="meta">领取截止 2026-06-25 15:00 UTC</div>
+              </div>
+            </section>
+
+            <section class="game">
+              <div class="cover-box">
+                <img class="cover" src="https://cdn1.epicgames.com/spt-assets/7d16f3b4c4d245a488f07c5adaca3d6f/dreamcore-1w31r.png" alt="深空梦里人" />
+              </div>
+              <div class="game-body">
+                <h3 class="game-title">深空梦里人</h3>
+                <div class="meta">领取截止 2026-06-25 15:00 UTC</div>
+              </div>
+            </section>
+          </div>
+
+          <div class="footer-note">
+            <span>信息来自 Epic Games 免费游戏列表，请以商店页面为准</span>
+          </div>
+        </article>
+      </div>
+
+      <div class="petals" aria-hidden="true">
+        <i class="petal"></i>
+        <i class="petal"></i>
+        <i class="petal"></i>
+        <i class="petal"></i>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

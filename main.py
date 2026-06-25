@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html
 import json
+import mimetypes
 import random
 import re
 from collections.abc import Awaitable, Callable
@@ -40,6 +42,8 @@ ARTICLE_EXCERPT_START = "[ARTICLE_EXCERPT_START]"
 ARTICLE_EXCERPT_END = "[ARTICLE_EXCERPT_END]"
 ARTICLE_TAGS_START = "[ARTICLE_TAGS_START]"
 ARTICLE_TAGS_END = "[ARTICLE_TAGS_END]"
+NEWS_CARD_START = "[NEWS_CARD_START]"
+NEWS_CARD_END = "[NEWS_CARD_END]"
 
 HTML_RENDER_OPTIONS = {
     "type": "png",
@@ -71,6 +75,20 @@ class NewsArticleDraft:
     excerpt: str
     tags: list[str]
     body: str
+
+
+@dataclass(frozen=True)
+class NewsCardItem:
+    category: str
+    source: str
+    title: str
+    summary: str
+
+
+@dataclass(frozen=True)
+class NewsCardDraft:
+    subtitle: str
+    items: list[NewsCardItem]
 
 
 class HaloSyncPostClient:
@@ -222,7 +240,7 @@ NEWS_SYNTHESIS_SYSTEM_PROMPT = f"""
 {LOCAL_ARTICLE_END}
 """.strip()
 
-EPIC_HTML_TEMPLATE = """
+OLD_EPIC_HTML_TEMPLATE = """
 <div class="pulse-card epic">
   <style>
     * { box-sizing: border-box; }
@@ -368,7 +386,7 @@ EPIC_HTML_TEMPLATE = """
 </div>
 """
 
-NEWS_HTML_TEMPLATE = """
+OLD_NEWS_HTML_TEMPLATE = """
 <div class="pulse-card news">
   <style>
     * { box-sizing: border-box; }
@@ -476,6 +494,843 @@ NEWS_HTML_TEMPLATE = """
       <div class="date">{{ date }}</div>
     </div>
     <div class="content">{{ report_html | safe }}</div>
+  </div>
+</div>
+"""
+
+
+EPIC_HTML_TEMPLATE = """
+<div class="pulse-card epic">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #332c3f;
+      --muted: #7a6f89;
+      --plum: #6e4f8f;
+      --plum-deep: #3d2c5a;
+      --wisteria: #b99adb;
+      --sakura: #f4a9bd;
+      --paper: #fff9f1;
+      --paper-soft: #fffdf8;
+      --gold: #c59445;
+      --line: rgba(110, 79, 143, .18);
+      --shadow: 0 28px 70px rgba(61, 44, 90, .20);
+    }
+    body {
+      margin: 0;
+      width: 100vw;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(244, 169, 189, .38), transparent 30%),
+        radial-gradient(circle at 90% 8%, rgba(185, 154, 219, .45), transparent 28%),
+        linear-gradient(135deg, #f7e8ef 0%, #efe5fa 38%, #f8f0df 100%);
+      color: var(--ink);
+      font-family: "Noto Serif SC", "Source Han Serif SC", "Microsoft YaHei", "PingFang SC", serif;
+      letter-spacing: 0;
+    }
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100vw;
+      min-width: 960px;
+      min-height: 680px;
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(255, 249, 241, .94));
+      background-size: 34px 34px, 34px 34px, auto;
+      box-shadow: var(--shadow);
+    }
+    .pulse-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, .75) 0 3px, transparent 4px),
+        radial-gradient(circle at 88% 68%, rgba(255, 255, 255, .65) 0 3px, transparent 4px),
+        linear-gradient(135deg, rgba(255, 255, 255, .42), transparent 34%, rgba(255, 255, 255, .36));
+    }
+    .header {
+      position: relative;
+      padding: 28px 36px 30px;
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(61, 44, 90, .96), rgba(112, 82, 145, .95) 48%, rgba(184, 112, 151, .94)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .09) 0 1px, transparent 1px 18px);
+    }
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 82% 20%, rgba(255, 255, 255, .23), transparent 24%),
+        linear-gradient(90deg, transparent 0 68%, rgba(255, 244, 205, .16));
+      pointer-events: none;
+    }
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -11px;
+      height: 22px;
+      background: radial-gradient(circle at 12px 11px, var(--paper) 0 10px, transparent 11px) 0 0 / 30px 22px repeat-x;
+    }
+    .brand-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 270px;
+      align-items: center;
+      gap: 18px;
+    }
+    .kicker {
+      margin-bottom: 8px;
+      color: rgba(255, 244, 225, .84);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .title {
+      display: flex;
+      align-items: baseline;
+      gap: 18px;
+      margin: 0;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 54px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+    .title span {
+      color: rgba(255, 244, 225, .9);
+      font-size: 32px;
+      font-weight: 800;
+    }
+    .date-strip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1;
+      margin-top: 18px;
+      padding: 8px 15px;
+      border: 1px solid rgba(255, 244, 205, .54);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      color: rgba(255, 248, 236, .95);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 20px;
+      font-weight: 750;
+    }
+    .date-strip::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ffd98a;
+      box-shadow: 0 0 16px rgba(255, 217, 138, .95);
+    }
+    .sticker-img {
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 14px 22px rgba(61, 44, 90, .24));
+    }
+    .sticker-img[src=""] {
+      display: none;
+    }
+    .header-sticker {
+      width: 260px;
+      height: 188px;
+      justify-self: end;
+      align-self: end;
+      margin-bottom: -10px;
+    }
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 20px;
+      padding: 48px 42px 42px 34px;
+    }
+    .side-ribbon {
+      position: relative;
+      min-height: 420px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 244, 248, .78)),
+        linear-gradient(180deg, var(--sakura), var(--wisteria));
+      border: 1px solid rgba(185, 154, 219, .42);
+      box-shadow: inset 0 0 0 6px rgba(255, 255, 255, .45);
+    }
+    .side-ribbon-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--plum-deep);
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 800;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    .side-sticker {
+      position: absolute;
+      left: -22px;
+      bottom: 12px;
+      width: 124px;
+      height: 124px;
+    }
+    .games-board {
+      position: relative;
+      padding: 26px 28px 30px;
+      border: 1px solid rgba(110, 79, 143, .16);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 253, 248, .94), rgba(255, 249, 241, .88)), var(--paper-soft);
+      box-shadow: 0 18px 45px rgba(92, 67, 123, .12);
+    }
+    .board-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 22px;
+      padding: 0 6px 18px;
+      border-bottom: 1px dashed rgba(110, 79, 143, .28);
+    }
+    .board-title {
+      margin: 0;
+      color: var(--plum-deep);
+      font-size: 32px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+    .board-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.5;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+    }
+    .inline-sticker {
+      width: 220px;
+      height: 166px;
+      flex: 0 0 auto;
+    }
+    .games {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+    .game {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .74), rgba(255, 250, 244, .62)),
+        linear-gradient(90deg, rgba(244, 169, 189, .12), transparent 34%);
+      box-shadow: 0 10px 26px rgba(92, 67, 123, .10);
+    }
+    .cover-box {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #ede4f4;
+    }
+    .cover {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .cover-placeholder {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      height: 100%;
+      color: var(--plum);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 28px;
+      font-weight: 900;
+    }
+    .cover-box::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, transparent 52%, rgba(61, 44, 90, .46)),
+        radial-gradient(circle at 82% 18%, rgba(255, 255, 255, .28), transparent 22%);
+      pointer-events: none;
+    }
+    .game-body {
+      padding: 20px 22px 22px;
+    }
+    .game-title {
+      margin: 0 0 14px;
+      color: var(--plum-deep);
+      font-size: 30px;
+      line-height: 1.24;
+      font-weight: 900;
+    }
+    .meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border: 1px solid rgba(197, 148, 69, .34);
+      border-radius: 999px;
+      background: rgba(255, 244, 205, .58);
+      color: #8a642a;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+      font-size: 18px;
+      font-weight: 800;
+    }
+    .meta::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 12px rgba(197, 148, 69, .75);
+    }
+    .empty {
+      padding: 28px;
+      border: 1px dashed rgba(110, 79, 143, .28);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .58);
+      color: var(--muted);
+      font-size: 26px;
+      line-height: 1.6;
+    }
+    .footer-note {
+      display: block;
+      margin-top: 24px;
+      padding: 18px 8px 0;
+      border-top: 1px dashed rgba(110, 79, 143, .28);
+      color: var(--muted);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 18px;
+    }
+    .petals {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .petal {
+      position: absolute;
+      width: 22px;
+      height: 14px;
+      border-radius: 70% 30% 70% 30%;
+      background: rgba(244, 169, 189, .58);
+      transform: rotate(var(--r));
+      filter: blur(.1px);
+    }
+    .petal:nth-child(1) { left: 102px; top: 186px; --r: 28deg; }
+    .petal:nth-child(2) { right: 160px; top: 258px; --r: -18deg; }
+    .petal:nth-child(3) { right: 68px; top: 560px; --r: 36deg; opacity: .7; }
+    .petal:nth-child(4) { left: 164px; bottom: 118px; --r: -32deg; opacity: .62; }
+  </style>
+  <div class="header">
+    <div class="brand-row">
+      <div>
+        <div class="kicker">Yuzusoft Shrine Game Dispatch</div>
+        <h1 class="title">EPIC PULSE <span>限时免费游戏</span></h1>
+      </div>
+      <img class="sticker-img header-sticker" src="{{ sticker_look }}" alt="丛雨酱看这里表情" />
+    </div>
+    <div class="date-strip">{{ date }}</div>
+  </div>
+
+  <div class="content-wrap">
+    <aside class="side-ribbon" aria-hidden="true">
+      <div class="side-ribbon-label"><span>今</span><span>日</span><span>免</span><span>费</span></div>
+      <img class="sticker-img side-sticker" src="{{ sticker_lay }}" alt="丛雨酱趴着表情" />
+    </aside>
+
+    <article class="games-board">
+      <header class="board-heading">
+        <div>
+          <h2 class="board-title">今日可领取游戏</h2>
+          <p class="board-subtitle">丛雨酱提醒：入库不亏，过期就只能等下次缘分。</p>
+        </div>
+        <img class="sticker-img inline-sticker" src="{{ sticker_game }}" alt="丛雨酱玩游戏表情" />
+      </header>
+
+      {% if games %}
+      <div class="games">
+        {% for game in games %}
+        <section class="game">
+          <div class="cover-box">
+            {% if game.image_url %}
+            <img class="cover" src="{{ game.image_url }}" />
+            {% else %}
+            <div class="cover-placeholder">EPIC GAMES</div>
+            {% endif %}
+          </div>
+          <div class="game-body">
+            <h3 class="game-title">{{ game.title }}</h3>
+            <div class="meta">领取截止 {{ game.end_date }}</div>
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">今日未发现正在进行的免费促销。</div>
+      {% endif %}
+
+      <div class="footer-note">
+        <span>信息来自 Epic Games 免费游戏列表，请以商店页面为准</span>
+      </div>
+    </article>
+  </div>
+  <div class="petals" aria-hidden="true">
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+  </div>
+</div>
+"""
+
+
+NEWS_HTML_TEMPLATE = """
+<div class="pulse-card news">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #332c3f;
+      --muted: #7a6f89;
+      --plum: #6e4f8f;
+      --plum-deep: #3d2c5a;
+      --wisteria: #b99adb;
+      --sakura: #f4a9bd;
+      --paper: #fff9f1;
+      --paper-soft: #fffdf8;
+      --gold: #c59445;
+      --line: rgba(110, 79, 143, .18);
+      --shadow: 0 28px 70px rgba(61, 44, 90, .20);
+    }
+    body {
+      margin: 0;
+      width: 100vw;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(244, 169, 189, .38), transparent 30%),
+        radial-gradient(circle at 90% 8%, rgba(185, 154, 219, .45), transparent 28%),
+        linear-gradient(135deg, #f7e8ef 0%, #efe5fa 38%, #f8f0df 100%);
+      color: var(--ink);
+      font-family: "Noto Serif SC", "Source Han Serif SC", "Microsoft YaHei", "PingFang SC", serif;
+      letter-spacing: 0;
+    }
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100vw;
+      min-width: 960px;
+      min-height: 900px;
+      padding: 0;
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(110, 79, 143, .055) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(255, 249, 241, .94));
+      background-size: 34px 34px, 34px 34px, auto;
+      box-shadow: var(--shadow);
+    }
+    .pulse-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, .75) 0 3px, transparent 4px),
+        radial-gradient(circle at 18% 82%, rgba(255, 255, 255, .55) 0 2px, transparent 3px),
+        radial-gradient(circle at 88% 68%, rgba(255, 255, 255, .65) 0 3px, transparent 4px),
+        linear-gradient(135deg, rgba(255, 255, 255, .42), transparent 34%, rgba(255, 255, 255, .36));
+    }
+    .header {
+      position: relative;
+      padding: 28px 32px 28px 36px;
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(61, 44, 90, .96), rgba(112, 82, 145, .95) 48%, rgba(184, 112, 151, .94)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .09) 0 1px, transparent 1px 18px);
+    }
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 86% 26%, rgba(255, 255, 255, .22), transparent 22%),
+        linear-gradient(90deg, transparent 0 70%, rgba(255, 244, 205, .16));
+      pointer-events: none;
+    }
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -11px;
+      height: 22px;
+      background: radial-gradient(circle at 12px 11px, var(--paper) 0 10px, transparent 11px) 0 0 / 30px 22px repeat-x;
+    }
+    .brand-row {
+      position: relative;
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr) 270px;
+      align-items: center;
+      gap: 18px;
+      z-index: 1;
+    }
+    .crest {
+      display: grid;
+      place-items: center;
+      width: 54px;
+      height: 54px;
+      border: 2px solid rgba(255, 244, 205, .88);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 255, 255, .18), transparent 58%), rgba(255, 255, 255, .08);
+      box-shadow:
+        inset 0 0 0 7px rgba(255, 255, 255, .08),
+        0 0 0 1px rgba(255, 255, 255, .18);
+    }
+    .crest::before,
+    .crest::after {
+      content: "";
+      position: absolute;
+      border-radius: 999px;
+    }
+    .crest::before {
+      width: 22px;
+      height: 22px;
+      border: 2px solid rgba(255, 244, 205, .86);
+    }
+    .crest::after {
+      width: 7px;
+      height: 7px;
+      background: #ffe9a8;
+      box-shadow: 0 0 14px rgba(255, 233, 168, .9);
+    }
+    .kicker {
+      margin-bottom: 6px;
+      color: rgba(255, 244, 225, .82);
+      font-size: 18px;
+      font-weight: 600;
+    }
+    .title {
+      margin: 0;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 46px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 2px;
+    }
+    .subtitle {
+      margin-left: 4px;
+      color: rgba(255, 244, 225, .88);
+      font-size: 24px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .date-strip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1;
+      margin-top: 16px;
+      padding: 8px 15px;
+      border: 1px solid rgba(255, 244, 205, .54);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      color: rgba(255, 248, 236, .95);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 19px;
+      font-weight: 650;
+    }
+    .date-strip::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ffd98a;
+      box-shadow: 0 0 16px rgba(255, 217, 138, .95);
+    }
+    .sticker-img {
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 12px 20px rgba(61, 44, 90, .22));
+    }
+    .sticker-img[src=""] {
+      display: none;
+    }
+    .sticker-img.header-sticker {
+      width: 230px;
+      height: 154px;
+      justify-self: end;
+      align-self: end;
+      margin-bottom: -10px;
+    }
+    .sticker-img.side-sticker {
+      position: absolute;
+      left: -20px;
+      bottom: 18px;
+      width: 120px;
+      height: 120px;
+    }
+    .sticker-img.inline-sticker {
+      width: 220px;
+      height: 166px;
+      flex: 0 0 auto;
+    }
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 82px 1fr;
+      gap: 20px;
+      padding: 42px 34px 42px 32px;
+    }
+    .side-ribbon {
+      position: relative;
+      min-height: 650px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 244, 248, .78)),
+        linear-gradient(180deg, var(--sakura), var(--wisteria));
+      border: 1px solid rgba(185, 154, 219, .42);
+      box-shadow: inset 0 0 0 6px rgba(255, 255, 255, .45);
+    }
+    .side-ribbon-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--plum-deep);
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 800;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    .news-board {
+      position: relative;
+      padding: 26px 28px 30px;
+      border: 1px solid rgba(110, 79, 143, .16);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255, 253, 248, .94), rgba(255, 249, 241, .88)), var(--paper-soft);
+      box-shadow: 0 18px 45px rgba(92, 67, 123, .12);
+    }
+    .board-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 22px;
+      padding: 0 6px 18px;
+      border-bottom: 1px dashed rgba(110, 79, 143, .28);
+    }
+    .board-title {
+      margin: 0;
+      color: var(--plum-deep);
+      font-size: 30px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+    .board-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.5;
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+    }
+    .news-list {
+      display: grid;
+      gap: 16px;
+    }
+    .news-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 16px;
+      padding: 20px 22px 20px 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .74), rgba(255, 250, 244, .62)),
+        linear-gradient(90deg, rgba(244, 169, 189, .12), transparent 34%);
+    }
+    .item-index {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 34% 28%, #fff 0 16%, transparent 18%),
+        linear-gradient(135deg, var(--sakura), var(--wisteria));
+      color: #fff;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 21px;
+      font-weight: 900;
+      box-shadow: 0 8px 22px rgba(110, 79, 143, .22);
+    }
+    .item-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-family: Inter, "Microsoft YaHei", sans-serif;
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .tag {
+      padding: 4px 9px;
+      border: 1px solid rgba(197, 148, 69, .34);
+      border-radius: 999px;
+      background: rgba(255, 244, 205, .52);
+      color: #8a642a;
+    }
+    .item-title {
+      margin: 0 0 8px;
+      color: var(--plum-deep);
+      font-size: 26px;
+      line-height: 1.32;
+      font-weight: 900;
+    }
+    .item-summary {
+      margin: 0;
+      color: var(--ink);
+      font-size: 24px;
+      line-height: 1.64;
+      text-align: justify;
+      word-break: break-word;
+    }
+    .footer-note {
+      display: block;
+      margin-top: 26px;
+      padding: 20px 8px 0;
+      border-top: 1px dashed rgba(110, 79, 143, .28);
+      color: var(--muted);
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-size: 18px;
+    }
+    .petals {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .petal {
+      position: absolute;
+      width: 22px;
+      height: 14px;
+      border-radius: 70% 30% 70% 30%;
+      background: rgba(244, 169, 189, .58);
+      transform: rotate(var(--r));
+      filter: blur(.1px);
+    }
+    .petal:nth-child(1) { left: 102px; top: 186px; --r: 28deg; }
+    .petal:nth-child(2) { right: 160px; top: 258px; --r: -18deg; }
+    .petal:nth-child(3) { right: 68px; top: 560px; --r: 36deg; opacity: .7; }
+    .petal:nth-child(4) { left: 164px; bottom: 118px; --r: -32deg; opacity: .62; }
+    .petal:nth-child(5) { right: 302px; bottom: 74px; --r: 12deg; opacity: .5; }
+    @media (min-width: 1120px) {
+      .content-wrap {
+        grid-template-columns: 82px 1fr;
+        padding-right: 46px;
+      }
+      .news-list {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        align-items: stretch;
+      }
+      .news-item {
+        grid-template-columns: 46px minmax(0, 1fr);
+        gap: 14px;
+        padding: 18px 18px 18px 16px;
+      }
+      .item-index {
+        width: 46px;
+        height: 46px;
+        font-size: 19px;
+      }
+      .item-meta {
+        font-size: 15px;
+        gap: 8px;
+      }
+      .tag {
+        padding: 3px 8px;
+      }
+      .item-title {
+        font-size: 23px;
+        line-height: 1.28;
+      }
+      .item-summary {
+        font-size: 21px;
+        line-height: 1.55;
+      }
+    }
+  </style>
+  <div class="header">
+    <div class="brand-row">
+      <div class="crest" aria-hidden="true"></div>
+      <div class="title-group">
+        <div class="kicker">Yuzusoft Shrine Intelligence Bulletin</div>
+        <h1 class="title">AI PULSE <span class="subtitle">每日科技前沿观察</span></h1>
+      </div>
+      <img class="sticker-img header-sticker" src="{{ sticker_happy }}" alt="丛雨酱开心表情" />
+    </div>
+    <div class="date-strip">{{ date }}</div>
+  </div>
+
+  <div class="content-wrap">
+    <aside class="side-ribbon" aria-hidden="true">
+      <div class="side-ribbon-label"><span>丛</span><span>雨</span><span>通</span><span>讯</span></div>
+      <img class="sticker-img side-sticker" src="{{ sticker_lay }}" alt="丛雨酱趴着表情" />
+    </aside>
+    <article class="news-board">
+      <header class="board-heading">
+        <div>
+          <h2 class="board-title">今日 AI 资讯摘要</h2>
+          <p class="board-subtitle">{{ subtitle }}</p>
+        </div>
+        <img class="sticker-img inline-sticker" src="{{ sticker_write }}" alt="丛雨酱写作表情" />
+      </header>
+      <div class="news-list">
+        {% for item in items %}
+        <section class="news-item">
+          <div class="item-index">{{ "%02d"|format(loop.index) }}</div>
+          <div>
+            <div class="item-meta"><span class="tag">{{ item.category }}</span><span>{{ item.source }}</span></div>
+            <h3 class="item-title">{{ item.title }}</h3>
+            <p class="item-summary">{{ item.summary }}</p>
+          </div>
+        </section>
+        {% endfor %}
+      </div>
+      <div class="footer-note">
+        <span>AI 基于公开资讯自动生成，仅供信息参考</span>
+      </div>
+    </article>
+  </div>
+  <div class="petals" aria-hidden="true">
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
   </div>
 </div>
 """
@@ -721,9 +1576,9 @@ class PulsePlugin(Star):
 
     async def _build_news_chain(self, unified_msg_origin: str) -> tuple[list, str]:
         now = datetime.now(self._timezone())
-        report, publish_message = await self._fetch_ai_news(unified_msg_origin)
+        report, publish_message, card = await self._fetch_ai_news(unified_msg_origin)
         try:
-            image_url = await self._render_news_image_url(report, now)
+            image_url = await self._render_news_image_url(card, now)
             return [Comp.Image.fromURL(image_url)], publish_message
         except Exception as exc:
             logger.error(f"Pulse failed to render AI news image: {exc}", exc_info=True)
@@ -737,10 +1592,11 @@ class PulsePlugin(Star):
             logger.error(f"Pulse failed to fetch Epic games: {exc}", exc_info=True)
             return []
 
-    async def _fetch_ai_news(self, unified_msg_origin: str) -> tuple[str, str]:
+    async def _fetch_ai_news(self, unified_msg_origin: str) -> tuple[str, str, NewsCardDraft]:
         endpoint = str(self.config.get("news_endpoint", "")).strip()
         if not endpoint:
-            return "未配置 AI 新闻聚合接口。", ""
+            message = "未配置 AI 新闻聚合接口。"
+            return message, "", self._fallback_news_card(message)
 
         try:
             bearer_token = str(self.config.get("news_bearer_token", "")).strip()
@@ -755,7 +1611,7 @@ class PulsePlugin(Star):
                 )
                 items = self._fallback_text_to_items(source_text)
 
-            qq_brief, article = await self._synthesize_news_outputs(
+            qq_brief, article, card = await self._synthesize_news_outputs(
                 items,
                 unified_msg_origin,
             )
@@ -763,19 +1619,21 @@ class PulsePlugin(Star):
             saved_path = self._save_news_markdown(local_article)
             logger.info(f"Pulse AI news markdown saved: {saved_path}")
             publish_message = await self._publish_news_to_halo(local_article)
-            return qq_brief, publish_message
+            return qq_brief, publish_message, card
         except NewsSynthesisError as exc:
             logger.error(f"Pulse 生成 AI 新闻简报失败: {exc}", exc_info=True)
-            return "AI 新闻简报生成失败。", ""
+            message = "AI 新闻简报生成失败。"
+            return message, "", self._fallback_news_card(message)
         except Exception as exc:
             logger.error(f"Pulse 获取 AI 新闻源失败: {exc}", exc_info=True)
-            return "AI 新闻源获取失败，请检查聚合接口配置。", ""
+            message = "AI 新闻源获取失败，请检查聚合接口配置。"
+            return message, "", self._fallback_news_card(message)
 
     async def _synthesize_news_outputs(
         self,
         items: list[NewsItem],
         unified_msg_origin: str,
-    ) -> tuple[str, NewsArticleDraft]:
+    ) -> tuple[str, NewsArticleDraft, NewsCardDraft]:
         max_items = self._config_int("news_max_items", 15)
         selected_items = items[: max(1, max_items)]
         payload = self._news_items_payload(selected_items)
@@ -804,6 +1662,13 @@ class PulsePlugin(Star):
         tags = self._parse_generated_tags(
             self._extract_tagged_section(output, ARTICLE_TAGS_START, ARTICLE_TAGS_END)
         )
+        try:
+            card = self._parse_news_card(
+                self._extract_tagged_section(output, NEWS_CARD_START, NEWS_CARD_END)
+            )
+        except NewsSynthesisError as exc:
+            logger.warning(f"Pulse news card fallback: {exc}")
+            card = self._fallback_news_card(qq_brief)
         body = self._strip_first_heading(
             self._extract_tagged_section(
                 output,
@@ -823,7 +1688,7 @@ class PulsePlugin(Star):
             tags=tags,
             body=body,
         )
-        return qq_brief, article
+        return qq_brief, article, card
 
     def _news_system_prompt(self) -> str:
         excerpt_min = self._config_int("halo_excerpt_min_chars", 120)
@@ -843,11 +1708,12 @@ class PulsePlugin(Star):
 你是资深 AI 科技媒体主编、产业分析师和信息架构师。
 我会提供一个 JSON 数组，包含今日最多 15 条 AI 新闻、模型发布、论文和评测资讯。
 
-你必须基于这些材料一次性生成五个结果，并严格使用以下标签分隔：
+你必须基于这些材料一次性生成六个结果，并严格使用以下标签分隔：
 {QQ_BRIEF_START}/{QQ_BRIEF_END}
 {ARTICLE_TITLE_START}/{ARTICLE_TITLE_END}
 {ARTICLE_EXCERPT_START}/{ARTICLE_EXCERPT_END}
 {ARTICLE_TAGS_START}/{ARTICLE_TAGS_END}
+{NEWS_CARD_START}/{NEWS_CARD_END}
 {LOCAL_ARTICLE_START}/{LOCAL_ARTICLE_END}
 
 任务一：QQ群推送简报
@@ -861,7 +1727,18 @@ class PulsePlugin(Star):
 - 摘要只输出在 {ARTICLE_EXCERPT_START}/{ARTICLE_EXCERPT_END} 中，长度控制在 {excerpt_min}-{excerpt_max} 个中文字符之间。
 - 标签只输出在 {ARTICLE_TAGS_START}/{ARTICLE_TAGS_END} 中，每行一个标签，输出 2-5 个中文或英文标签；不要带 #、逗号或项目符号。
 
-任务三：本地网站 Markdown 正文
+任务三：QQ 图片新闻卡片结构化数据
+- 只输出在 {NEWS_CARD_START}/{NEWS_CARD_END} 中，内容必须是合法 JSON，不要使用 Markdown 代码块。
+- JSON 顶层对象包含 subtitle 和 items。
+- subtitle 是对今日资讯的一句话锐评，必须以“吾的评价是”开头，长度 24-45 个中文字符，语气可以锐利但不要低俗。
+- items 输出 6 条；每条对应一个独立资讯来源或主题聚合，不要把多条新闻混成一条。
+- 每个 item 必须包含 category、source、title、summary 四个字段。
+- category 是 2-6 个字的主题标签，例如 Agent、模型、OCR、视频、论文、开源、芯片、融资。
+- source 是媒体、机构、论文方向或场景来源，8 个字以内；没有明确媒体时写主题方向。
+- title 是该条资讯的中文短标题，18-32 个中文字符。
+- summary 是该条资讯的独立总结，45-85 个中文字符；只讲这一条资讯，不要串联其他条。
+
+任务四：本地网站 Markdown 正文
 1. 正文严禁出现一级标题，也不要输出 YAML front matter；正文可以使用 Markdown 二级标题和三级标题。
 2. 严禁逐条罗列，必须把全部材料融合成一篇前后呼应的中文科技综述文章。
 3. 每一段在叙述事实的同时，都要自然织入行业透视和深度点评，分析篇幅至少占全文三分之一。
@@ -890,6 +1767,10 @@ AI
 大模型
 产业观察
 {ARTICLE_TAGS_END}
+
+{NEWS_CARD_START}
+{{"subtitle":"吾的评价是今日 AI 竞争正在从模型表演转向证据、记忆和工作流控制。","items":[{{"category":"Agent","source":"企业协作","title":"AI Agent 正进入企业基础设施","summary":"Anthropic 和 MoEngage 的动作说明，AI 入口正在从单次问答转向协作语境、客户触点和可执行工作流。"}}]}}
+{NEWS_CARD_END}
 
 {LOCAL_ARTICLE_START}
 　　正文自然段...
@@ -950,6 +1831,88 @@ AI
             if tag and tag not in tags:
                 tags.append(tag)
         return tags[:5]
+
+    def _parse_news_card(self, value: str) -> NewsCardDraft:
+        try:
+            data = json.loads(value.strip())
+        except json.JSONDecodeError as exc:
+            raise NewsSynthesisError("LLM 输出的新闻卡片 JSON 无效") from exc
+
+        if not isinstance(data, dict):
+            raise NewsSynthesisError("LLM 输出的新闻卡片不是 JSON 对象")
+
+        subtitle = self._clean_card_text(str(data.get("subtitle") or ""), limit=60)
+        if not subtitle:
+            subtitle = "吾的评价是今日 AI 行业仍在把模型能力压进真实业务流程。"
+        if not subtitle.startswith("吾的评价是"):
+            subtitle = f"吾的评价是{subtitle}"
+
+        raw_items = data.get("items")
+        if not isinstance(raw_items, list):
+            raise NewsSynthesisError("LLM 输出的新闻卡片 items 不是数组")
+
+        items: list[NewsCardItem] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            category = self._clean_card_text(str(raw_item.get("category") or "AI"), limit=12)
+            source = self._clean_card_text(str(raw_item.get("source") or "综合资讯"), limit=16)
+            title = self._clean_card_text(str(raw_item.get("title") or ""), limit=40)
+            summary = self._clean_card_text(str(raw_item.get("summary") or ""), limit=110)
+            if not title or not summary:
+                continue
+            items.append(
+                NewsCardItem(
+                    category=category or "AI",
+                    source=source or "综合资讯",
+                    title=title,
+                    summary=summary,
+                )
+            )
+            if len(items) >= 6:
+                break
+
+        if not items:
+            raise NewsSynthesisError("LLM 输出的新闻卡片条目为空")
+
+        return NewsCardDraft(subtitle=subtitle, items=items)
+
+    def _fallback_news_card(self, report: str) -> NewsCardDraft:
+        lines = [line.strip() for line in report.splitlines() if line.strip()]
+        items: list[NewsCardItem] = []
+        for line in lines[:6]:
+            text = self._clean_card_text(line, limit=120)
+            if not text:
+                continue
+            title = text[:32].rstrip("，。；、 ")
+            items.append(
+                NewsCardItem(
+                    category="AI",
+                    source="综合资讯",
+                    title=title or "AI 新闻简报",
+                    summary=text,
+                )
+            )
+        if not items:
+            items.append(
+                NewsCardItem(
+                    category="AI",
+                    source="系统消息",
+                    title="AI 新闻简报暂无内容",
+                    summary="当前没有可用于生成图片卡片的新闻内容，请稍后重试或检查新闻聚合接口。",
+                )
+            )
+        return NewsCardDraft(
+            subtitle="吾的评价是今日资讯暂未成形，先把信息源检查清楚。",
+            items=items,
+        )
+
+    def _clean_card_text(self, value: str, *, limit: int) -> str:
+        text = re.sub(r"\s+", " ", value).strip()
+        text = text.strip("`*_#- ")
+        if len(text) > limit:
+            return text[:limit].rstrip("，。；、 ") + "…"
+        return text
 
     def _strip_first_heading(self, markdown_text: str) -> str:
         lines: list[str] = []
@@ -1231,6 +2194,9 @@ AI
                 }
                 for game in games[:max_items]
             ],
+            "sticker_look": self._asset_data_uri("imgs", "看这里.png"),
+            "sticker_game": self._asset_data_uri("imgs", "玩游戏.png"),
+            "sticker_lay": self._asset_data_uri("imgs", "趴着.png"),
         }
         return await self.html_render(
             EPIC_HTML_TEMPLATE,
@@ -1238,16 +2204,37 @@ AI
             options=HTML_RENDER_OPTIONS,
         )
 
-    async def _render_news_image_url(self, report: str, now: datetime) -> str:
+    async def _render_news_image_url(self, card: NewsCardDraft, now: datetime) -> str:
         data = {
             "date": now.strftime("%Y-%m-%d"),
-            "report_html": self._markdown_to_html(report),
+            "subtitle": html.escape(card.subtitle),
+            "items": [
+                {
+                    "category": html.escape(item.category),
+                    "source": html.escape(item.source),
+                    "title": html.escape(item.title),
+                    "summary": html.escape(item.summary),
+                }
+                for item in card.items[:6]
+            ],
+            "sticker_happy": self._asset_data_uri("imgs", "开心.png"),
+            "sticker_lay": self._asset_data_uri("imgs", "趴着.png"),
+            "sticker_write": self._asset_data_uri("imgs", "写作.png"),
         }
         return await self.html_render(
             NEWS_HTML_TEMPLATE,
             data,
             options=HTML_RENDER_OPTIONS,
         )
+
+    def _asset_data_uri(self, *parts: str) -> str:
+        path = Path(__file__).resolve().parent.joinpath(*parts)
+        if not path.exists():
+            logger.warning(f"Pulse image asset not found: {path}")
+            return ""
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
 
     def _format_epic_text(self, games: list[EpicFreeGame], now: datetime) -> list:
         if not games:
