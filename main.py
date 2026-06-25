@@ -20,7 +20,7 @@ except ImportError:
     ZoneInfoNotFoundError = Exception
 
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 import astrbot.api.message_components as Comp
@@ -1519,6 +1519,7 @@ class PulsePlugin(Star):
             job_name="epic",
             targets=self._target_sessions("epic"),
             chain_factory=lambda umo: self._build_epic_chain(),
+            build_once=True,
         )
 
     async def _push_news_to_targets(self):
@@ -1526,6 +1527,7 @@ class PulsePlugin(Star):
             job_name="news",
             targets=self._target_sessions("news"),
             chain_factory=self._build_news_chain,
+            build_once=True,
         )
 
     async def _push_to_targets(
@@ -1533,12 +1535,22 @@ class PulsePlugin(Star):
         job_name: str,
         targets: list[str],
         chain_factory: Callable[[str], Awaitable[list | tuple[list, str]]],
+        *,
+        build_once: bool = False,
     ):
         if not targets:
             logger.warning(f"Pulse {job_name} has no targets; skip push")
             return
 
         logger.info(f"Pulse {job_name} pushing to {len(targets)} target(s)")
+        prebuilt_result: list | tuple[list, str] | None = None
+        if build_once:
+            try:
+                prebuilt_result = await chain_factory(targets[0])
+            except Exception as exc:
+                logger.error(f"Pulse {job_name} build failed: {exc}", exc_info=True)
+                return
+
         for index, unified_msg_origin in enumerate(targets):
             if index > 0:
                 delay = self._next_push_delay()
@@ -1546,23 +1558,34 @@ class PulsePlugin(Star):
                 await asyncio.sleep(delay)
 
             try:
-                result = await chain_factory(unified_msg_origin)
+                result = prebuilt_result if prebuilt_result is not None else await chain_factory(unified_msg_origin)
                 if isinstance(result, tuple):
                     chain, publish_message = result
                 else:
                     chain = result
                     publish_message = ""
-                await self.context.send_message(unified_msg_origin, chain)
+                await self.context.send_message(
+                    unified_msg_origin,
+                    self._message_chain(chain),
+                )
                 if publish_message:
                     await self.context.send_message(
                         unified_msg_origin,
-                        [Comp.Plain(publish_message)],
+                        self._message_chain([Comp.Plain(publish_message)]),
                     )
             except Exception as exc:
                 logger.error(
                     f"Pulse {job_name} push failed for {unified_msg_origin}: {exc}",
                     exc_info=True,
                 )
+
+    def _message_chain(self, components: list) -> MessageChain:
+        chain = MessageChain()
+        if hasattr(chain, "chain"):
+            chain.chain.extend(components)
+        else:
+            chain.chain = list(components)
+        return chain
 
     async def _build_epic_chain(self) -> list:
         now = datetime.now(self._timezone())
