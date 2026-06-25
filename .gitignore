@@ -209,7 +209,10 @@ __marimo__/
 docs
 
 # Local temporary debug scripts
-debug_scripts/
+debug_scripts/*
+!debug_scripts/
+!debug_scripts/news_murasame_style_debug.html
+!debug_scripts/epic_murasame_style_debug.html
 
 # Cloudflare Worker local artifacts
 worker/.wrangler/
