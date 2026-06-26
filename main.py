@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import inspect
 import json
 import mimetypes
 import random
@@ -52,7 +53,7 @@ HTML_RENDER_OPTIONS = {
     "timeout": 30000,
 }
 
-SYNCPOST_PATH = "/apis/api.starter.halo.run/v1alpha1/articles"
+SYNCPOST_PATH = "/apis/api.syncpostai.sora.run/v1alpha1/articles"
 
 
 class HaloPublishError(Exception):
@@ -113,20 +114,13 @@ class HaloSyncPostClient:
     ) -> HaloPublishResult:
         endpoint = self._article_endpoint(site_url)
         payload: dict[str, Any] = {
+            "source": "astrbot-pulse",
             "content": content,
             "contentType": "markdown",
             "publish": publish,
         }
-        if title:
-            payload["title"] = title
         if slug:
             payload["slug"] = slug
-        if excerpt:
-            payload["excerpt"] = excerpt
-        if tags:
-            payload["tags"] = tags
-        if categories:
-            payload["categories"] = categories
 
         response = await self._client.post(
             endpoint,
@@ -137,6 +131,12 @@ class HaloSyncPostClient:
             json=payload,
         )
         response_text = response.text.strip()
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location", "")
+            raise HaloPublishError(
+                f"Halo SyncPostAI returned redirect HTTP {response.status_code}: "
+                f"location={location or '<empty>'}"
+            )
         if response.status_code >= 400:
             raise HaloPublishError(
                 f"Halo SyncPostAI returned HTTP {response.status_code}: "
@@ -146,7 +146,12 @@ class HaloSyncPostClient:
         try:
             data = response.json()
         except ValueError as exc:
-            raise HaloPublishError("Halo SyncPostAI returned non-JSON response") from exc
+            content_type = response.headers.get("content-type", "")
+            raise HaloPublishError(
+                "Halo SyncPostAI returned non-JSON response: "
+                f"HTTP {response.status_code}, content-type={content_type or 'unknown'}, "
+                f"body={response_text[:500] or '<empty>'}"
+            ) from exc
 
         success = bool(data.get("success", True))
         message = str(data.get("message") or "")
@@ -1480,6 +1485,37 @@ class PulsePlugin(Star):
         )
         yield event.plain_result(text)
 
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("providers")
+    async def pulse_providers(self, event: AstrMessageEvent):
+        """查看当前 AstrBot 已配置的 LLM Provider。"""
+        configured_ids = self._configured_news_provider_ids()
+        providers = await self._all_llm_providers()
+        if not providers:
+            yield event.plain_result("未读取到已配置的 LLM Provider。")
+            return
+
+        lines = ["当前已配置的 LLM Provider："]
+        for index, provider in enumerate(providers, start=1):
+            provider_id = self._provider_attr(provider, "id", "provider_id", "provider")
+            provider_name = self._provider_attr(
+                provider,
+                "name",
+                "provider_name",
+                "display_name",
+                "model_name",
+            )
+            marker = " *" if provider_id in configured_ids else ""
+            if provider_name and provider_name != provider_id:
+                lines.append(f"{index}. {provider_id} ({provider_name}){marker}")
+            else:
+                lines.append(f"{index}. {provider_id}{marker}")
+
+        lines.append("")
+        lines.append("带 * 的 Provider 已配置为 AI 简报专用 Provider。")
+        lines.append("在插件配置 news_llm_provider_ids 中可多选；留空时使用当前会话默认 Provider。")
+        yield event.plain_result("\n".join(lines))
+
     async def terminate(self):
         for task in self._tasks:
             if not task.done():
@@ -1836,7 +1872,7 @@ AI
         lines = [
             "---",
             f"title: {self._yaml_scalar(title)}",
-            f"auther: {self._yaml_scalar(author)}",
+            f"author: {self._yaml_scalar(author)}",
             f"cover: {self._yaml_scalar(cover)}",
             f"excerpt: {self._yaml_scalar(excerpt)}",
             "categories:",
@@ -2004,22 +2040,18 @@ AI
         prompt: str,
         system_prompt: str,
     ) -> str:
-        get_provider = getattr(self.context, "get_using_provider", None)
-        provider = get_provider(umo=unified_msg_origin) if get_provider else None
-        if provider:
-            llm_resp = await provider.text_chat(
+        provider_ids = self._configured_news_provider_ids()
+        if provider_ids:
+            llm_resp = await self._llm_text_with_configured_providers(
+                provider_ids=provider_ids,
                 prompt=prompt,
                 system_prompt=system_prompt,
             )
         else:
-            provider_id = await self.context.get_current_chat_provider_id(
-                umo=unified_msg_origin
-            )
-            if not provider_id:
-                raise NewsSynthesisError("当前会话没有可用的 LLM Provider")
-            llm_resp = await self.context.llm_generate(
-                chat_provider_id=provider_id,
-                prompt=f"系统指令：{system_prompt}\n\n{prompt}",
+            llm_resp = await self._llm_text_with_default_provider(
+                unified_msg_origin=unified_msg_origin,
+                prompt=prompt,
+                system_prompt=system_prompt,
             )
 
         completion = getattr(llm_resp, "completion_text", "") or ""
@@ -2027,6 +2059,159 @@ AI
         if not completion:
             raise NewsSynthesisError("LLM 返回为空")
         return completion
+
+    async def _llm_text_with_configured_providers(
+        self,
+        provider_ids: list[str],
+        prompt: str,
+        system_prompt: str,
+    ):
+        errors: list[str] = []
+
+        if len(provider_ids) == 1:
+            provider_id = provider_ids[0]
+            try:
+                return await self._call_provider_by_id(provider_id, prompt, system_prompt)
+            except Exception as exc:
+                errors.append(f"{provider_id}: {exc}")
+                logger.warning(
+                    f"Pulse LLM Provider {provider_id} failed, retry in 10s: {exc}",
+                    exc_info=True,
+                )
+                await asyncio.sleep(10)
+                try:
+                    return await self._call_provider_by_id(provider_id, prompt, system_prompt)
+                except Exception as retry_exc:
+                    errors.append(f"{provider_id} retry: {retry_exc}")
+                    raise NewsSynthesisError(
+                        "AI 简报专用 LLM Provider 调用失败: " + " | ".join(errors)
+                    ) from retry_exc
+
+        for provider_id in provider_ids:
+            try:
+                return await self._call_provider_by_id(provider_id, prompt, system_prompt)
+            except Exception as exc:
+                errors.append(f"{provider_id}: {exc}")
+                logger.warning(
+                    f"Pulse LLM Provider {provider_id} failed, switch to next: {exc}",
+                    exc_info=True,
+                )
+
+        raise NewsSynthesisError(
+            "所有 AI 简报专用 LLM Provider 均调用失败: " + " | ".join(errors)
+        )
+
+    async def _llm_text_with_default_provider(
+        self,
+        unified_msg_origin: str,
+        prompt: str,
+        system_prompt: str,
+    ):
+        try:
+            get_provider = getattr(self.context, "get_using_provider", None)
+            provider = get_provider(umo=unified_msg_origin) if get_provider else None
+            if provider:
+                return await provider.text_chat(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                )
+
+            provider_id = await self.context.get_current_chat_provider_id(
+                umo=unified_msg_origin
+            )
+            if not provider_id:
+                raise NewsSynthesisError("当前会话没有可用的 LLM Provider")
+            return await self.context.llm_generate(
+                chat_provider_id=provider_id,
+                prompt=f"系统指令：{system_prompt}\n\n{prompt}",
+            )
+        except NewsSynthesisError:
+            raise
+        except Exception as exc:
+            raise NewsSynthesisError(f"默认 LLM Provider 调用失败: {exc}") from exc
+
+    async def _call_provider_by_id(
+        self,
+        provider_id: str,
+        prompt: str,
+        system_prompt: str,
+    ):
+        provider = await self._llm_provider_by_id(provider_id)
+        if not provider:
+            raise NewsSynthesisError(f"未找到配置的 LLM Provider: {provider_id}")
+        return await provider.text_chat(
+            prompt=prompt,
+            system_prompt=system_prompt,
+        )
+
+    def _configured_news_provider_ids(self) -> list[str]:
+        values: list[str] = []
+
+        raw_multi = self.config.get("news_llm_provider_ids", [])
+        if isinstance(raw_multi, list):
+            values.extend(str(item).strip() for item in raw_multi)
+        elif isinstance(raw_multi, str):
+            values.extend(self._split_provider_ids(raw_multi))
+
+        deduped: list[str] = []
+        for value in values:
+            if value and value not in deduped:
+                deduped.append(value)
+        return deduped
+
+    def _split_provider_ids(self, value: str) -> list[str]:
+        return [
+            item.strip()
+            for item in re.split(r"[,，\n;；]+", value)
+            if item.strip()
+        ]
+
+    async def _llm_provider_by_id(self, provider_id: str):
+        get_provider = getattr(self.context, "get_provider_by_id", None)
+        if not get_provider:
+            return None
+        provider = get_provider(provider_id=provider_id)
+        if inspect.isawaitable(provider):
+            provider = await provider
+        return provider
+
+    async def _all_llm_providers(self) -> list:
+        get_all = getattr(self.context, "get_all_providers", None)
+        if not get_all:
+            return []
+        providers = get_all()
+        if inspect.isawaitable(providers):
+            providers = await providers
+        if isinstance(providers, dict):
+            return [
+                {"id": str(provider_id), "provider": provider}
+                for provider_id, provider in providers.items()
+            ]
+        if isinstance(providers, list):
+            return providers
+        if isinstance(providers, tuple):
+            return list(providers)
+        return []
+
+    def _provider_attr(self, provider, *names: str) -> str:
+        wrapped_provider = None
+        if isinstance(provider, dict) and "provider" in provider:
+            wrapped_provider = provider["provider"]
+
+        for name in names:
+            value = ""
+            if isinstance(provider, dict):
+                value = provider.get(name, "")
+            else:
+                value = getattr(provider, name, "")
+            if not value and wrapped_provider is not None:
+                if isinstance(wrapped_provider, dict):
+                    value = wrapped_provider.get(name, "")
+                else:
+                    value = getattr(wrapped_provider, name, "")
+            if value:
+                return str(value)
+        return str(wrapped_provider if wrapped_provider is not None else provider)
 
     def _news_items_payload(self, items: list[NewsItem]) -> list[dict[str, str]]:
         return [
@@ -2118,11 +2303,7 @@ AI
             return ""
 
         now = datetime.now(self._timezone())
-        title = self._front_matter_value(markdown_text, "title") or self._extract_markdown_title(markdown_text)
         slug = self._halo_article_slug(now)
-        excerpt = self._front_matter_value(markdown_text, "excerpt") or self._markdown_excerpt(markdown_text)
-        tags = self._front_matter_list(markdown_text, "tags") or self._config_string_list("halo_publish_tags")
-        categories = self._front_matter_list(markdown_text, "categories") or self._config_string_list("halo_publish_categories")
         publish = self._config_bool("halo_publish_direct", True)
 
         try:
@@ -2130,11 +2311,7 @@ AI
                 site_url,
                 token,
                 markdown_text,
-                title=title,
                 slug=slug,
-                excerpt=excerpt,
-                tags=tags,
-                categories=categories,
                 publish=publish,
             )
         except HaloPublishError as exc:

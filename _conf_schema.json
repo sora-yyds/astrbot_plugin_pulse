@@ -78,6 +78,13 @@
     "hint": "需要与 Cloudflare Worker 的 SECRET_TOKEN 一致。",
     "default": ""
   },
+  "news_llm_provider_ids": {
+    "description": "AI 简报专用 LLM Provider",
+    "type": "list",
+    "_special": "select_providers",
+    "hint": "可选择多个 Provider。调用失败时会按选择顺序自动切换到下一个；只选择一个时失败后等待 10 秒重试一次。留空则沿用当前会话默认 Provider。没有 key？现在获取：https://one.gloscai.com/keys",
+    "default": []
+  },
   "news_max_items": {
     "description": "AI 简报最多处理资讯数",
     "type": "int",
@@ -117,7 +124,7 @@
   "halo_article_author": {
     "description": "Halo 文章作者",
     "type": "string",
-    "hint": "写入 Markdown 顶部 auther 字段，例如 admin。",
+    "hint": "写入 Markdown 顶部 author 字段，例如 admin。",
     "default": "admin"
   },
   "halo_article_cover": {

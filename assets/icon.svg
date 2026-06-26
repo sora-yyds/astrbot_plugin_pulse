@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">AstrBot Pulse icon</title>
+  <desc id="desc">A pulse wave connecting an AI news spark and an Epic games tile.</desc>
+  <defs>
+    <linearGradient id="bg" x1="34" y1="24" x2="222" y2="232" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="0.52" stop-color="#1e3a8a"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+    <linearGradient id="pulse" x1="47" y1="133" x2="209" y2="133" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.48" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="10" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#bg)"/>
+  <circle cx="194" cy="62" r="20" fill="#fbbf24" opacity="0.96"/>
+  <path d="M194 27v13M194 84v13M159 62h13M216 62h13M169 37l9 9M210 78l9 9M169 87l9-9M210 46l9-9" stroke="#fde68a" stroke-width="8" stroke-linecap="round" opacity="0.9"/>
+  <g filter="url(#shadow)">
+    <rect x="42" y="55" width="88" height="70" rx="18" fill="#f8fafc" opacity="0.96"/>
+    <rect x="56" y="70" width="60" height="12" rx="6" fill="#2563eb"/>
+    <rect x="56" y="91" width="42" height="10" rx="5" fill="#14b8a6"/>
+    <circle cx="111" cy="99" r="8" fill="#f59e0b"/>
+  </g>
+  <path d="M46 139h32l15-34 28 68 24-86 21 52h44" fill="none" stroke="url(#pulse)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <g filter="url(#shadow)">
+    <rect x="134" y="151" width="76" height="52" rx="14" fill="#111827" stroke="#38bdf8" stroke-width="5"/>
+    <path d="M156 178h33M172 162v33" stroke="#f8fafc" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="193" cy="169" r="5" fill="#fbbf24"/>
+    <circle cx="199" cy="185" r="5" fill="#14b8a6"/>
+  </g>
+  <text x="128" y="232" text-anchor="middle" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="25" font-weight="800" fill="#f8fafc" letter-spacing="1.5">PULSE</text>
+</svg>
