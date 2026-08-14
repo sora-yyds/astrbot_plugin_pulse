@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GitHub Push Ranking Light Style Debug</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    .debug-stage {
+      width: 1280px;
+      min-height: 720px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --border: #d0d7de;
+      --ink: #1f2328;
+      --muted: #57606a;
+      --link: #0969da;
+      --green: #1a7f37;
+      --green-mid: #2da44e;
+      --green-soft: #dafbe1;
+      --amber: #9a6700;
+      --amber-soft: #fff8c5;
+      --track: #eff2f5;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    body {
+      margin: 0;
+      width: 100vw;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100vw;
+      min-width: 960px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .topbar .octicon {
+      color: var(--ink);
+    }
+    .topbar .path {
+      color: var(--link);
+    }
+    .octicon {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      vertical-align: -4px;
+      fill: currentColor;
+    }
+    .octicon.sm { width: 16px; height: 16px; vertical-align: -2px; }
+    .header {
+      padding: 26px 32px 20px;
+      background:
+        radial-gradient(circle at 88% 12%, rgba(45, 164, 78, .08), transparent 30%),
+        linear-gradient(180deg, #ffffff, #ffffff);
+    }
+    .kicker {
+      color: var(--green-mid);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 2px;
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 8px;
+    }
+    .title {
+      margin: 0;
+      font-size: 40px;
+      line-height: 1.15;
+      font-weight: 800;
+      letter-spacing: .3px;
+    }
+    .title .period {
+      color: var(--link);
+      font-size: 26px;
+      font-weight: 800;
+      margin-left: 10px;
+    }
+    .date-strip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 17px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .date-strip::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green-mid);
+      box-shadow: 0 0 10px rgba(45, 164, 78, .7);
+    }
+    .stats-strip {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .stat-card {
+      flex: 1;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+    }
+    .stat-label {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .stat-value {
+      margin-top: 4px;
+      font-family: var(--mono);
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .stat-value.green { color: var(--green); }
+    .body {
+      padding: 18px 32px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .user-row {
+      display: grid;
+      grid-template-columns: 52px 52px minmax(0, 1fr) 150px;
+      align-items: center;
+      gap: 14px;
+      padding: 15px 18px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+    }
+    .rank-badge {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .user-row.top1 .rank-badge { background: var(--green); border-color: var(--green); color: #fff; }
+    .user-row.top2 .rank-badge { background: var(--green-mid); border-color: var(--green-mid); color: #fff; }
+    .user-row.top3 .rank-badge { background: #57ab5a; border-color: #57ab5a; color: #fff; }
+    .avatar-box {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .avatar {
+      position: relative;
+      z-index: 1;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .avatar-fallback {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .main { min-width: 0; }
+    .user-line {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 9px;
+    }
+    .username {
+      color: var(--link);
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+    }
+    .last-push {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .trunc-badge {
+      padding: 2px 9px;
+      border: 1px solid rgba(154, 103, 0, .4);
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .bar-track {
+      height: 10px;
+      border-radius: 6px;
+      background: var(--track);
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, var(--green-mid), var(--green));
+    }
+    .week-strip {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .day-cell {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      background: #ebedf0;
+    }
+    .day-cell.l1 { background: #9be9a8; }
+    .day-cell.l2 { background: #40c463; }
+    .day-cell.l3 { background: #30a14e; }
+    .day-cell.miss { background: #ffffff; border: 1px dashed var(--border); }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .chip .octicon { color: var(--muted); }
+    .chip.more {
+      background: #fff;
+      color: var(--ink);
+    }
+    .count-box {
+      text-align: right;
+    }
+    .count {
+      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .count em {
+      display: block;
+      margin-top: 5px;
+      font-family: var(--sans);
+      font-style: normal;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .empty {
+      padding: 30px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 24px;
+      text-align: center;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 32px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .page-badge {
+      padding: 3px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 700;
+    }
+  
+  </style>
+</head>
+<body>
+  <div class="debug-stage">
+    <div class="pulse-card github">
+      <div class="topbar">
+        <svg class="octicon" viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15 .08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82 -.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66 -.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38 A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+        <span><span class="path">github.com</span> · Pulse 订阅推送报告</span>
+      </div>
+
+      <div class="header">
+        <div class="kicker">GITHUB PULSE</div>
+        <div class="title-row">
+          <h1 class="title">订阅用户推送排行<span class="period">近 7 天</span></h1>
+          <div class="date-strip">08-08 ~ 08-14</div>
+        </div>
+        <div class="stats-strip">
+          <div class="stat-card">
+            <div class="stat-label">总推送次数</div>
+            <div class="stat-value green">65</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">活跃用户</div>
+            <div class="stat-value">4</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">涉及仓库</div>
+            <div class="stat-value">10</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="body">
+
+    <div class="user-row top1">
+      <div class="rank-badge">1</div>
+      <div class="avatar-box">
+        <img class="avatar" src="../imgs/看这里.png" alt="" onerror="this.style.display='none'" />
+        <div class="avatar-fallback">S</div>
+      </div>
+      <div class="main">
+        <div class="user-line">
+          <span class="username">soulter</span>
+          
+          <span class="last-push">最近 12:51</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: 100.0%"></div></div>
+        <div class="week-strip"><div class="day-cell " title="08-08 · 0 次推送"></div><div class="day-cell " title="08-09 · 0 次推送"></div><div class="day-cell l1" title="08-10 · 2 次推送"></div><div class="day-cell l2" title="08-11 · 4 次推送"></div><div class="day-cell l1" title="08-12 · 1 次推送"></div><div class="day-cell l3" title="08-13 · 6 次推送"></div><div class="day-cell l3" title="08-14 · 7 次推送"></div></div>
+        <div class="chips">
+          <span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>AstrBotDevs/AstrBot</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>AstrBotDevs/AstrBot-desktop</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>C10H14N2O5/AstrBot</span>
+          
+        </div>
+      </div>
+      <div class="count-box">
+        <div class="count">7<em>次推送</em></div>
+      </div>
+    </div>
+    <div class="user-row top2">
+      <div class="rank-badge">2</div>
+      <div class="avatar-box">
+        <img class="avatar" src="../imgs/趴着.png" alt="" onerror="this.style.display='none'" />
+        <div class="avatar-fallback">T</div>
+      </div>
+      <div class="main">
+        <div class="user-line">
+          <span class="username">torvalds</span>
+          
+          <span class="last-push">最近 11:01</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: 42.9%"></div></div>
+        <div class="week-strip"><div class="day-cell " title="08-08 · 0 次推送"></div><div class="day-cell " title="08-09 · 0 次推送"></div><div class="day-cell l1" title="08-10 · 2 次推送"></div><div class="day-cell l2" title="08-11 · 4 次推送"></div><div class="day-cell l1" title="08-12 · 1 次推送"></div><div class="day-cell l3" title="08-13 · 6 次推送"></div><div class="day-cell l3" title="08-14 · 7 次推送"></div></div>
+        <div class="chips">
+          <span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>torvalds/linux</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>torvalds/GuitarPedal</span>
+          
+        </div>
+      </div>
+      <div class="count-box">
+        <div class="count">3<em>次推送</em></div>
+      </div>
+    </div>
+    <div class="user-row top3">
+      <div class="rank-badge">3</div>
+      <div class="avatar-box">
+        <img class="avatar" src="../imgs/玩游戏.png" alt="" onerror="this.style.display='none'" />
+        <div class="avatar-fallback">O</div>
+      </div>
+      <div class="main">
+        <div class="user-line">
+          <span class="username">openai-dev</span>
+          <span class="trunc-badge">事件流截断 ≥</span>
+          <span class="last-push">最近 10:22</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: 28.6%"></div></div>
+        <div class="week-strip"><div class="day-cell " title="08-08 · 0 次推送"></div><div class="day-cell " title="08-09 · 0 次推送"></div><div class="day-cell l1" title="08-10 · 2 次推送"></div><div class="day-cell l2" title="08-11 · 4 次推送"></div><div class="day-cell l1" title="08-12 · 1 次推送"></div><div class="day-cell l3" title="08-13 · 6 次推送"></div><div class="day-cell l3" title="08-14 · 7 次推送"></div></div>
+        <div class="chips">
+          <span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>openai/openai-python</span>
+          
+        </div>
+      </div>
+      <div class="count-box">
+        <div class="count">2<em>次推送</em></div>
+      </div>
+    </div>
+    <div class="user-row ">
+      <div class="rank-badge">4</div>
+      <div class="avatar-box">
+        <img class="avatar" src="../imgs/开心.png" alt="" onerror="this.style.display='none'" />
+        <div class="avatar-fallback">E</div>
+      </div>
+      <div class="main">
+        <div class="user-line">
+          <span class="username">example-bot</span>
+          
+          <span class="last-push">最近 09:47</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: 14.3%"></div></div>
+        <div class="week-strip"><div class="day-cell " title="08-08 · 0 次推送"></div><div class="day-cell " title="08-09 · 0 次推送"></div><div class="day-cell l1" title="08-10 · 2 次推送"></div><div class="day-cell l2" title="08-11 · 4 次推送"></div><div class="day-cell l1" title="08-12 · 1 次推送"></div><div class="day-cell l3" title="08-13 · 6 次推送"></div><div class="day-cell l3" title="08-14 · 7 次推送"></div></div>
+        <div class="chips">
+          <span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>example-bot/actions</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>example-bot/cron</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>example-bot/web</span><span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7 .75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25 a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>example-bot/misc</span>
+          <span class="chip more">+1</span>
+        </div>
+      </div>
+      <div class="count-box">
+        <div class="count">1<em>次推送</em></div>
+      </div>
+    </div>
+      </div>
+
+      <div class="footer">
+        <span>数据来自 GitHub 公开事件流（PushEvent）· 仅统计公开推送 · 由 Pulse 渲染</span>
+        <span class="page-badge">1/1</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
