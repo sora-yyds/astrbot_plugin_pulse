@@ -27,6 +27,11 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 import astrbot.api.message_components as Comp
 import httpx
 
+from .services.arena import (
+    ArenaLeaderboard,
+    ArenaLeaderboardClient,
+    ArenaModelEntry,
+)
 from .services.epic import EpicFreeGame, EpicGamesClient
 from .services.news import AiNewsClient, NewsItem, NewsSynthesisError
 
@@ -1341,11 +1346,527 @@ NEWS_HTML_TEMPLATE = """
 """
 
 
+ARENA_HTML_TEMPLATE = """
+<div class="pulse-card arena">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --ink: #2b2f45;
+      --muted: #7a7f9c;
+      --indigo: #4a4f9e;
+      --indigo-deep: #2c2e63;
+      --violet: #9c8ae0;
+      --cyan: #67d8e6;
+      --paper: #f4f6fb;
+      --paper-soft: #fafbff;
+      --gold: #c59445;
+      --line: rgba(74, 79, 158, .18);
+      --shadow: 0 28px 70px rgba(35, 37, 84, .22);
+    }
+    body {
+      margin: 0;
+      width: 100vw;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(103, 216, 230, .30), transparent 30%),
+        radial-gradient(circle at 90% 8%, rgba(156, 138, 224, .40), transparent 28%),
+        linear-gradient(135deg, #e7ecfb 0%, #ece8fa 38%, #eef6f5 100%);
+      color: var(--ink);
+      font-family: Inter, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      letter-spacing: 0;
+    }
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100vw;
+      min-width: 980px;
+      min-height: 640px;
+      border: 1px solid rgba(255, 255, 255, .82);
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(74, 79, 158, .05) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(74, 79, 158, .05) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255, 255, 255, .84), rgba(244, 246, 251, .94));
+      background-size: 34px 34px, 34px 34px, auto;
+      box-shadow: var(--shadow);
+    }
+    .pulse-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 8% 18%, rgba(255, 255, 255, .75) 0 3px, transparent 4px),
+        radial-gradient(circle at 88% 68%, rgba(255, 255, 255, .65) 0 3px, transparent 4px),
+        linear-gradient(135deg, rgba(255, 255, 255, .42), transparent 34%, rgba(255, 255, 255, .36));
+    }
+    .header {
+      position: relative;
+      padding: 28px 36px 30px;
+      color: #fff;
+      background:
+        linear-gradient(120deg, rgba(35, 37, 84, .97), rgba(63, 61, 128, .96) 48%, rgba(56, 92, 143, .95)),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .08) 0 1px, transparent 1px 18px);
+    }
+    .header::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 82% 20%, rgba(103, 216, 230, .26), transparent 24%),
+        linear-gradient(90deg, transparent 0 68%, rgba(103, 216, 230, .12));
+      pointer-events: none;
+    }
+    .header::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -11px;
+      height: 22px;
+      background: radial-gradient(circle at 12px 11px, var(--paper) 0 10px, transparent 11px) 0 0 / 30px 22px repeat-x;
+    }
+    .brand-row {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 270px;
+      align-items: center;
+      gap: 18px;
+    }
+    .kicker {
+      margin-bottom: 8px;
+      color: rgba(103, 216, 230, .92);
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .kicker .bracket {
+      color: rgba(255, 255, 255, .62);
+    }
+    .title {
+      display: flex;
+      align-items: baseline;
+      gap: 18px;
+      margin: 0;
+      font-size: 52px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 1px;
+    }
+    .title span {
+      color: rgba(103, 216, 230, .92);
+      font-size: 30px;
+      font-weight: 800;
+    }
+    .date-strip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 1;
+      margin-top: 18px;
+      padding: 8px 15px;
+      border: 1px solid rgba(103, 216, 230, .5);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .12);
+      color: rgba(240, 246, 255, .96);
+      font-size: 20px;
+      font-weight: 750;
+    }
+    .date-strip::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #67d8e6;
+      box-shadow: 0 0 16px rgba(103, 216, 230, .95);
+    }
+    .sticker-img {
+      display: block;
+      object-fit: contain;
+      filter: drop-shadow(0 14px 22px rgba(35, 37, 84, .26));
+    }
+    .sticker-img[src=""] {
+      display: none;
+    }
+    .header-sticker {
+      width: 260px;
+      height: 188px;
+      justify-self: end;
+      align-self: end;
+      margin-bottom: -10px;
+    }
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 70px 1fr;
+      gap: 20px;
+      padding: 44px 40px 42px 32px;
+    }
+    .side-ribbon {
+      position: relative;
+      min-height: 420px;
+      border-radius: 999px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(240, 244, 255, .78)),
+        linear-gradient(180deg, var(--cyan), var(--violet));
+      border: 1px solid rgba(156, 138, 224, .42);
+      box-shadow: inset 0 0 0 6px rgba(255, 255, 255, .45);
+    }
+    .side-ribbon-label {
+      position: absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      color: var(--indigo-deep);
+      font-size: 22px;
+      line-height: 1;
+      font-weight: 800;
+    }
+    .side-sticker {
+      position: absolute;
+      left: -22px;
+      bottom: 12px;
+      width: 124px;
+      height: 124px;
+    }
+    .board {
+      position: relative;
+      padding: 26px 26px 30px;
+      border: 1px solid rgba(74, 79, 158, .16);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(250, 251, 255, .96), rgba(244, 246, 251, .9)), var(--paper-soft);
+      box-shadow: 0 18px 45px rgba(58, 62, 128, .12);
+    }
+    .board-heading {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 20px;
+      padding: 0 6px 18px;
+      border-bottom: 1px dashed rgba(74, 79, 158, .28);
+    }
+    .board-title {
+      margin: 0;
+      color: var(--indigo-deep);
+      font-size: 32px;
+      line-height: 1.25;
+      font-weight: 900;
+    }
+    .board-subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 19px;
+      line-height: 1.5;
+    }
+    .board-stats {
+      display: flex;
+      flex: 0 0 auto;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .board-stats strong {
+      color: var(--indigo-deep);
+      font-size: 24px;
+      font-weight: 900;
+    }
+    .board-stats .stat {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .78);
+    }
+    .table {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .thead, .trow {
+      display: grid;
+      grid-template-columns: 74px minmax(0, 1fr) 150px 110px 150px 110px;
+      align-items: center;
+      gap: 10px;
+    }
+    .thead {
+      padding: 0 16px 4px;
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .trow {
+      position: relative;
+      min-height: 74px;
+      padding: 12px 16px;
+      border: 1px solid rgba(74, 79, 158, .13);
+      border-radius: 14px;
+      background:
+        linear-gradient(90deg, rgba(103, 216, 230, .07), transparent 30%),
+        rgba(255, 255, 255, .82);
+      box-shadow: 0 8px 20px rgba(58, 62, 128, .07);
+    }
+    .trow.gold { border-color: rgba(197, 148, 69, .55); background: linear-gradient(90deg, rgba(255, 235, 190, .6), rgba(255, 255, 255, .86) 34%); }
+    .trow.silver { border-color: rgba(122, 127, 156, .5); background: linear-gradient(90deg, rgba(232, 235, 246, .85), rgba(255, 255, 255, .9) 34%); }
+    .trow.bronze { border-color: rgba(190, 122, 74, .5); background: linear-gradient(90deg, rgba(249, 226, 208, .68), rgba(255, 255, 255, .9) 34%); }
+    .t-rank {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .rank-badge {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: linear-gradient(160deg, #ffffff, #e6e9f6);
+      border: 1px solid rgba(74, 79, 158, .22);
+      color: var(--indigo-deep);
+      font-size: 26px;
+      font-weight: 900;
+      box-shadow: 0 6px 14px rgba(58, 62, 128, .14);
+    }
+    .trow.gold .rank-badge { background: linear-gradient(160deg, #fff7e0, #f3d488); border-color: rgba(197, 148, 69, .6); color: #8a642a; }
+    .trow.silver .rank-badge { background: linear-gradient(160deg, #fdfdff, #d9dded); border-color: rgba(122, 127, 156, .55); color: #565c80; }
+    .trow.bronze .rank-badge { background: linear-gradient(160deg, #fdf3ea, #ecc5a4); border-color: rgba(190, 122, 74, .55); color: #96602f; }
+    .rank-spread {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .t-model { min-width: 0; }
+    .model-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--indigo-deep);
+      font-size: 25px;
+      font-weight: 900;
+      letter-spacing: .2px;
+    }
+    .model-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .chip {
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+    .chip.org {
+      border: 1px solid rgba(74, 79, 158, .24);
+      background: rgba(230, 233, 248, .8);
+      color: #4c5196;
+    }
+    .chip.license-open {
+      border: 1px solid rgba(46, 139, 105, .4);
+      background: rgba(214, 243, 231, .8);
+      color: #1e7a57;
+    }
+    .chip.license-closed {
+      border: 1px solid rgba(158, 88, 52, .38);
+      background: rgba(250, 230, 214, .8);
+      color: #9a5528;
+    }
+    .chip.license-other {
+      border: 1px solid rgba(122, 127, 156, .3);
+      background: rgba(234, 236, 244, .8);
+      color: #5c6284;
+    }
+    .chip.release {
+      border: 1px solid rgba(103, 216, 230, .55);
+      background: rgba(214, 246, 250, .8);
+      color: #1a7a86;
+    }
+    .t-score {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .score {
+      color: var(--indigo-deep);
+      font-size: 30px;
+      font-weight: 900;
+      letter-spacing: .5px;
+    }
+    .ci {
+      color: var(--muted);
+      font-size: 17px;
+      font-weight: 700;
+    }
+    .t-votes {
+      color: var(--ink);
+      font-size: 23px;
+      font-weight: 800;
+    }
+    .t-price {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .price-line {
+      color: var(--ink);
+      font-size: 21px;
+      font-weight: 800;
+    }
+    .price-label {
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .t-ctx {
+      color: var(--ink);
+      font-size: 21px;
+      font-weight: 800;
+    }
+    .empty {
+      padding: 28px;
+      border: 1px dashed rgba(74, 79, 158, .28);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .58);
+      color: var(--muted);
+      font-size: 26px;
+      line-height: 1.6;
+    }
+    .footer-note {
+      display: block;
+      margin-top: 24px;
+      padding: 18px 8px 0;
+      border-top: 1px dashed rgba(74, 79, 158, .28);
+      color: var(--muted);
+      font-size: 18px;
+    }
+    .petals {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .petal {
+      position: absolute;
+      width: 22px;
+      height: 14px;
+      border-radius: 70% 30% 70% 30%;
+      background: rgba(103, 216, 230, .4);
+      transform: rotate(var(--r));
+      filter: blur(.1px);
+    }
+    .petal:nth-child(1) { left: 102px; top: 186px; --r: 28deg; }
+    .petal:nth-child(2) { right: 160px; top: 258px; --r: -18deg; background: rgba(156, 138, 224, .5); }
+    .petal:nth-child(3) { right: 68px; top: 560px; --r: 36deg; opacity: .7; }
+    .petal:nth-child(4) { left: 164px; bottom: 118px; --r: -32deg; opacity: .62; }
+  </style>
+  <div class="header">
+    <div class="brand-row">
+      <div>
+        <div class="kicker"><span class="bracket">&lt;</span> LMArena Code Dispatch <span class="bracket">/&gt;</span></div>
+        <h1 class="title">ARENA PULSE <span>代码模型排行榜</span></h1>
+      </div>
+      <img class="sticker-img header-sticker" src="{{ sticker_look }}" alt="丛雨酱看这里表情" />
+    </div>
+    <div class="date-strip">{{ date }}{% if updated %} · 数据截止 {{ updated }}{% endif %}</div>
+  </div>
+
+  <div class="content-wrap">
+    <aside class="side-ribbon" aria-hidden="true">
+      <div class="side-ribbon-label"><span>模</span><span>型</span><span>排</span><span>行</span></div>
+      <img class="sticker-img side-sticker" src="{{ sticker_lay }}" alt="丛雨酱趴着表情" />
+    </aside>
+
+    <article class="board">
+      <header class="board-heading">
+        <div>
+          <h2 class="board-title">{{ title }}</h2>
+          <p class="board-subtitle">{{ subtitle }}</p>
+        </div>
+        <div class="board-stats">
+          <span class="stat">总票数 <strong>{{ total_votes }}</strong></span>
+          <span class="stat">上榜模型 <strong>{{ total_models }}</strong></span>
+        </div>
+      </header>
+
+      {% if entries %}
+      <div class="table">
+        <div class="thead">
+          <div class="tcell t-rank">排名</div>
+          <div class="tcell t-model">模型</div>
+          <div class="tcell t-score">分数</div>
+          <div class="tcell t-votes">票数</div>
+          <div class="tcell t-price">价格 $/M</div>
+          <div class="tcell t-ctx">上下文</div>
+        </div>
+        {% for entry in entries %}
+        <div class="trow {{ entry.medal }}">
+          <div class="tcell t-rank">
+            <span class="rank-badge">{{ entry.rank }}</span>
+            {% if entry.spread %}<span class="rank-spread">{{ entry.spread }}</span>{% endif %}
+          </div>
+          <div class="tcell t-model">
+            <div class="model-name">{{ entry.model }}</div>
+            <div class="model-meta">
+              {% if entry.org %}<span class="chip org">{{ entry.org }}</span>{% endif %}
+              <span class="chip license-{{ entry.license_kind }}">{{ entry.license_label }}</span>
+              {% if entry.release %}<span class="chip release">{{ entry.release }}</span>{% endif %}
+            </div>
+          </div>
+          <div class="tcell t-score">
+            <div class="score">{{ entry.score }}</div>
+            <div class="ci">{{ entry.ci }}</div>
+          </div>
+          <div class="tcell t-votes">{{ entry.votes }}</div>
+          <div class="tcell t-price">
+            <div class="price-line">{{ entry.price }}</div>
+            <div class="price-label">{{ entry.price_label }}</div>
+          </div>
+          <div class="tcell t-ctx">{{ entry.context }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="empty">未获取到排行榜数据。</div>
+      {% endif %}
+
+      <div class="footer-note">
+        <span>数据来自 arena.ai 代码竞技场盲测对战，仅统计本榜所示分类 · 由 Pulse 渲染</span>
+      </div>
+    </article>
+  </div>
+  <div class="petals" aria-hidden="true">
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+    <i class="petal"></i>
+  </div>
+</div>
+"""
+
+
 @register(
     PLUGIN_NAME,
     "Sora",
-    "每日推送 Epic 免费游戏与 AI 行业简报。",
-    "0.3.0",
+    "每日推送 Epic 免费游戏、AI 行业简报与 Arena 代码模型排行榜。",
+    "0.4.0",
 )
 class PulsePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1354,6 +1875,7 @@ class PulsePlugin(Star):
         self._tasks: list[asyncio.Task] = []
         self._epic_client = EpicGamesClient()
         self._news_client = AiNewsClient()
+        self._arena_client = ArenaLeaderboardClient()
         self._halo_client = HaloSyncPostClient()
         self._plugin_data_dir = (
             Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
@@ -1388,6 +1910,18 @@ class PulsePlugin(Star):
                 )
             )
 
+        if self._config_bool("arena_enabled", True):
+            self._tasks.append(
+                asyncio.create_task(
+                    self._scheduled_loop(
+                        job_name="arena",
+                        time_key="arena_daily_time",
+                        push_func=self._push_arena_to_targets,
+                    ),
+                    name="pulse_arena_loop",
+                )
+            )
+
         logger.info(f"Pulse 已启动 {len(self._tasks)} 个定时任务")
 
     @filter.command_group("pulse")
@@ -1408,6 +1942,20 @@ class PulsePlugin(Star):
         yield event.chain_result(chain)
         if publish_message:
             yield event.plain_result(publish_message)
+
+    @pulse.command("leaderboard")
+    async def pulse_leaderboard(self, event: AstrMessageEvent):
+        """立即抓取 Arena 代码模型排行榜并渲染成图片，可附加数量如 /pulse leaderboard 15。"""
+        limit = self._parse_arena_limit(event.message_str)
+        chain = await self._build_arena_chain(limit)
+        yield event.chain_result(chain)
+
+    @pulse.command("arena")
+    async def pulse_arena(self, event: AstrMessageEvent):
+        """pulse leaderboard 的别名，立即发送 Arena 代码模型排行榜。"""
+        limit = self._parse_arena_limit(event.message_str)
+        chain = await self._build_arena_chain(limit)
+        yield event.chain_result(chain)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("publish_news")
@@ -1443,12 +1991,20 @@ class PulsePlugin(Star):
         yield event.plain_result("已绑定当前会话到 AI 行业简报推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("bind_arena")
+    async def pulse_bind_arena(self, event: AstrMessageEvent):
+        """将当前会话绑定到 Arena 排行榜定时推送。"""
+        self._add_target("arena", event.unified_msg_origin)
+        yield event.plain_result("已绑定当前会话到 Arena 代码模型排行榜推送。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("bind")
     async def pulse_bind(self, event: AstrMessageEvent):
-        """将当前会话同时绑定到两个定时推送。"""
+        """将当前会话同时绑定到全部定时推送。"""
         self._add_target("epic", event.unified_msg_origin)
         self._add_target("news", event.unified_msg_origin)
-        yield event.plain_result("已绑定当前会话到 Epic 和 AI 行业简报推送。")
+        self._add_target("arena", event.unified_msg_origin)
+        yield event.plain_result("已绑定当前会话到 Epic、AI 行业简报和 Arena 排行榜推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind_epic")
@@ -1465,11 +2021,19 @@ class PulsePlugin(Star):
         yield event.plain_result("已取消当前会话的 AI 行业简报推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("unbind_arena")
+    async def pulse_unbind_arena(self, event: AstrMessageEvent):
+        """取消当前会话的 Arena 排行榜定时推送。"""
+        self._remove_target("arena", event.unified_msg_origin)
+        yield event.plain_result("已取消当前会话的 Arena 代码模型排行榜推送。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind")
     async def pulse_unbind(self, event: AstrMessageEvent):
         """取消当前会话的全部 Pulse 定时推送。"""
         self._remove_target("epic", event.unified_msg_origin)
         self._remove_target("news", event.unified_msg_origin)
+        self._remove_target("arena", event.unified_msg_origin)
         yield event.plain_result("已取消当前会话的全部 Pulse 推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -1478,10 +2042,12 @@ class PulsePlugin(Star):
         """查看推送目标。"""
         epic_targets = self._target_sessions("epic")
         news_targets = self._target_sessions("news")
+        arena_targets = self._target_sessions("arena")
         text = (
             "Pulse 推送目标\n"
             f"Epic 免费游戏 ({len(epic_targets)}):\n{self._format_target_list(epic_targets)}\n\n"
-            f"AI 行业简报 ({len(news_targets)}):\n{self._format_target_list(news_targets)}"
+            f"AI 行业简报 ({len(news_targets)}):\n{self._format_target_list(news_targets)}\n\n"
+            f"Arena 排行榜 ({len(arena_targets)}):\n{self._format_target_list(arena_targets)}"
         )
         yield event.plain_result(text)
 
@@ -1529,6 +2095,7 @@ class PulsePlugin(Star):
 
         await self._epic_client.aclose()
         await self._news_client.aclose()
+        await self._arena_client.aclose()
         await self._halo_client.aclose()
         logger.info("Pulse plugin stopped")
 
@@ -1563,6 +2130,14 @@ class PulsePlugin(Star):
             job_name="news",
             targets=self._target_sessions("news"),
             chain_factory=self._build_news_chain,
+            build_once=True,
+        )
+
+    async def _push_arena_to_targets(self):
+        await self._push_to_targets(
+            job_name="arena",
+            targets=self._target_sessions("arena"),
+            chain_factory=lambda umo: self._build_arena_chain(),
             build_once=True,
         )
 
@@ -1643,6 +2218,26 @@ class PulsePlugin(Star):
             logger.error(f"Pulse failed to render AI news image: {exc}", exc_info=True)
             chain = self._format_news_text(report, now)
             return chain, publish_message
+
+    async def _build_arena_chain(self, limit: int | None = None) -> list:
+        now = datetime.now(self._timezone())
+        board = await self._fetch_arena_leaderboard()
+        if not board or not board.entries:
+            return [Comp.Plain("Arena 排行榜获取失败或暂无数据。")]
+        try:
+            image_url = await self._render_arena_image_url(board, now, limit)
+            return [Comp.Image.fromURL(image_url)]
+        except Exception as exc:
+            logger.error(f"Pulse failed to render Arena image: {exc}", exc_info=True)
+            return self._format_arena_text(board, now, limit)
+
+    async def _fetch_arena_leaderboard(self) -> ArenaLeaderboard | None:
+        try:
+            url = str(self.config.get("arena_leaderboard_url", "")).strip()
+            return await self._arena_client.fetch_leaderboard(url or None)
+        except Exception as exc:
+            logger.error(f"Pulse failed to fetch Arena leaderboard: {exc}", exc_info=True)
+            return None
 
     async def _fetch_epic_games(self, now: datetime) -> list[EpicFreeGame]:
         try:
@@ -2426,6 +3021,136 @@ AI
             data,
             options=HTML_RENDER_OPTIONS,
         )
+
+    async def _render_arena_image_url(
+        self,
+        board: ArenaLeaderboard,
+        now: datetime,
+        limit: int | None = None,
+    ) -> str:
+        max_items = limit or self._config_int("arena_max_models", 10)
+        updated = board.vote_cutoff.strftime("%Y-%m-%d") if board.vote_cutoff else ""
+        data = {
+            "date": now.strftime("%Y-%m-%d"),
+            "updated": updated,
+            "title": html.escape(board.display_title),
+            "subtitle": html.escape(board.description),
+            "total_votes": f"{board.total_votes:,}",
+            "total_models": board.total_models or len(board.entries),
+            "entries": [
+                self._arena_entry_data(entry) for entry in board.entries[:max_items]
+            ],
+            "sticker_look": self._asset_data_uri("imgs", "看这里.png"),
+            "sticker_lay": self._asset_data_uri("imgs", "趴着.png"),
+        }
+        return await self.html_render(
+            ARENA_HTML_TEMPLATE,
+            data,
+            options=HTML_RENDER_OPTIONS,
+        )
+
+    def _arena_entry_data(self, entry: ArenaModelEntry) -> dict:
+        rank = entry.rank or 0
+        spread = ""
+        if entry.rank_upper and entry.rank_lower:
+            if entry.rank_upper != rank or entry.rank_lower != rank:
+                spread = f"{entry.rank_upper}-{entry.rank_lower}"
+        medal = {1: "gold", 2: "silver", 3: "bronze"}.get(rank, "")
+        license_kind, license_label = self._arena_license_info(entry.license)
+        upper_ci = round(entry.rating_upper - entry.rating)
+        lower_ci = round(entry.rating - entry.rating_lower)
+        price = "—"
+        if entry.input_price is not None or entry.output_price is not None:
+            price_in = self._arena_number(entry.input_price)
+            price_out = self._arena_number(entry.output_price)
+            price = f"${price_in} / ${price_out}"
+        release = "预发布" if entry.release_type else ""
+        return {
+            "rank": rank,
+            "spread": spread,
+            "medal": medal,
+            "model": html.escape(entry.model),
+            "org": html.escape(entry.organization),
+            "license_kind": license_kind,
+            "license_label": html.escape(license_label),
+            "release": release,
+            "score": f"{entry.rating:.0f}",
+            "ci": f"+{upper_ci} / -{lower_ci}",
+            "votes": f"{entry.votes:,}",
+            "price": price,
+            "price_label": "输入 / 输出" if price != "—" else "暂无价格",
+            "context": self._arena_context(entry.context_length),
+        }
+
+    def _arena_license_info(self, license_text: str) -> tuple[str, str]:
+        lowered = license_text.strip().lower()
+        if "proprietary" in lowered:
+            return "closed", "闭源"
+        open_markers = (
+            "open",
+            "mit",
+            "apache",
+            "bsd",
+            "gpl",
+            "cc-",
+            "creative commons",
+            "llama",
+            "deepseek",
+            "qwen",
+            "gemma",
+        )
+        if any(marker in lowered for marker in open_markers):
+            return "open", "开源"
+        if lowered:
+            return "other", license_text.strip()
+        return "other", "未知"
+
+    def _arena_number(self, value: float | None) -> str:
+        if value is None:
+            return "—"
+        if value == int(value):
+            return str(int(value))
+        return f"{value:g}"
+
+    def _arena_context(self, value: int | None) -> str:
+        if not value:
+            return "—"
+        if value >= 1_000_000:
+            millions = value / 1_000_000
+            return f"{millions:g}M" if millions != int(millions) else f"{int(millions)}M"
+        if value >= 1000:
+            thousands = value / 1000
+            return f"{thousands:g}K" if thousands != int(thousands) else f"{int(thousands)}K"
+        return str(value)
+
+    def _parse_arena_limit(self, message_text: str) -> int | None:
+        match = re.search(r"(?:leaderboard|arena)\s+(\d{1,3})", message_text or "")
+        if not match:
+            return None
+        try:
+            return max(1, min(int(match.group(1)), 30))
+        except ValueError:
+            return None
+
+    def _format_arena_text(
+        self,
+        board: ArenaLeaderboard,
+        now: datetime,
+        limit: int | None = None,
+    ) -> list:
+        max_items = limit or self._config_int("arena_max_models", 10)
+        updated = board.vote_cutoff.strftime("%Y-%m-%d") if board.vote_cutoff else ""
+        lines = [f"{board.display_title} | {now:%Y-%m-%d}"]
+        if updated:
+            lines.append(f"数据截止 {updated} · 总票数 {board.total_votes:,}")
+        lines.append("")
+        for entry in board.entries[:max_items]:
+            score = f"{entry.rating:.0f}"
+            lines.append(
+                f"{entry.rank}. {entry.model} ({entry.organization or '未知厂商'}) "
+                f"{score} 分 · {entry.votes:,} 票"
+            )
+        return [Comp.Plain("\n".join(lines))]
 
     def _asset_data_uri(self, *parts: str) -> str:
         path = Path(__file__).resolve().parent.joinpath(*parts)

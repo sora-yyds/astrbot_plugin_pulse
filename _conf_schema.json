@@ -91,6 +91,35 @@
     "hint": "会一次性交给 LLM 生成 QQ 简报和本地 Markdown 长文，建议不超过 15。",
     "default": 15
   },
+  "arena_enabled": {
+    "description": "启用 Arena 排行榜定时推送",
+    "type": "bool",
+    "default": true
+  },
+  "arena_daily_time": {
+    "description": "Arena 排行榜每日推送时间",
+    "type": "string",
+    "hint": "24 小时制 HH:MM，例如 09:00。",
+    "default": "09:00"
+  },
+  "arena_target_sessions": {
+    "description": "Arena 排行榜推送目标会话",
+    "type": "list",
+    "hint": "可在目标会话中使用 /pulse bind_arena 自动写入。",
+    "default": []
+  },
+  "arena_leaderboard_url": {
+    "description": "Arena 排行榜页面地址",
+    "type": "string",
+    "hint": "arena.ai 代码竞技场排行榜 URL，例如 https://arena.ai/leaderboard/code 或 https://arena.ai/leaderboard/code/webdev-react。留空时使用默认整体排行。",
+    "default": "https://arena.ai/leaderboard/code"
+  },
+  "arena_max_models": {
+    "description": "Arena 单次最多展示模型数",
+    "type": "int",
+    "hint": "图片卡片中最多展示的模型行数，建议不超过 15。",
+    "default": 10
+  },
   "halo_publish_enabled": {
     "description": "启用 Halo 文章发布",
     "type": "bool",
