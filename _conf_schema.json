@@ -120,6 +120,59 @@
     "hint": "图片卡片中最多展示的模型行数，建议不超过 15。",
     "default": 10
   },
+  "github_enabled": {
+    "description": "启用 GitHub 推送排行定时推送",
+    "type": "bool",
+    "default": true
+  },
+  "github_daily_time": {
+    "description": "GitHub 每日推送时间",
+    "type": "string",
+    "hint": "24 小时制 HH:MM，例如 22:00。统计当天 00:00 至推送时刻的公开推送。",
+    "default": "22:00"
+  },
+  "github_weekly_enabled": {
+    "description": "启用 GitHub 周五周报",
+    "type": "bool",
+    "hint": "开启后每周五推送近 7 天推送汇总。",
+    "default": true
+  },
+  "github_weekly_time": {
+    "description": "GitHub 周报推送时间（周五）",
+    "type": "string",
+    "hint": "24 小时制 HH:MM，例如 22:30。",
+    "default": "22:30"
+  },
+  "github_target_sessions": {
+    "description": "GitHub 推送目标会话（日推与周报共用）",
+    "type": "list",
+    "hint": "可在目标会话中使用 /pulse bind_github 自动写入。",
+    "default": []
+  },
+  "github_usernames": {
+    "description": "订阅的 GitHub 用户名",
+    "type": "list",
+    "hint": "逗号分隔多个用户名，例如 torvalds, soulter。按当日推送次数降序排行，0 推送用户不会推送。",
+    "default": []
+  },
+  "github_token": {
+    "description": "GitHub Token（可选）",
+    "type": "string",
+    "hint": "留空使用无鉴权模式（60 次/小时）。订阅用户较多或非常活跃时可填入 Personal Access Token 提升至 5000 次/小时。仅保存在 AstrBot 本地配置。",
+    "default": ""
+  },
+  "github_max_users_per_image": {
+    "description": "每张图片最多展示用户数",
+    "type": "int",
+    "hint": "订阅用户超过该数量时自动拆分多张图片依次推送，建议 6~10。",
+    "default": 8
+  },
+  "github_max_repos_per_user": {
+    "description": "每个用户最多展示仓库数",
+    "type": "int",
+    "hint": "超出部分以 +N 折叠显示。",
+    "default": 3
+  },
   "halo_publish_enabled": {
     "description": "启用 Halo 文章发布",
     "type": "bool",

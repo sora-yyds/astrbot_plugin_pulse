@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone, tzinfo
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 try:
@@ -33,6 +34,16 @@ from .services.arena import (
     ArenaModelEntry,
 )
 from .services.epic import EpicFreeGame, EpicGamesClient
+from .services.github import (
+    GitHubEventsClient,
+    GitHubPushStats,
+    GitHubRateLimitError,
+    GitHubRepoCount,
+    avatar_url as github_avatar_url,
+    cleanup_snapshots as github_cleanup_snapshots,
+    load_snapshots as github_load_snapshots,
+    save_daily_snapshot as github_save_daily_snapshot,
+)
 from .services.news import AiNewsClient, NewsItem, NewsSynthesisError
 
 
@@ -1862,11 +1873,411 @@ ARENA_HTML_TEMPLATE = """
 """
 
 
+GITHUB_HTML_TEMPLATE = """
+<div class="pulse-card github">
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #f6f8fa;
+      --card: #ffffff;
+      --border: #d0d7de;
+      --ink: #1f2328;
+      --muted: #57606a;
+      --link: #0969da;
+      --green: #1a7f37;
+      --green-mid: #2da44e;
+      --green-soft: #dafbe1;
+      --amber: #9a6700;
+      --amber-soft: #fff8c5;
+      --track: #eff2f5;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    }
+    body {
+      margin: 0;
+      width: 100vw;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: var(--sans);
+    }
+    .pulse-card {
+      position: relative;
+      overflow: hidden;
+      width: 100vw;
+      min-width: 960px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+    }
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .topbar .octicon {
+      color: var(--ink);
+    }
+    .topbar .path {
+      color: var(--link);
+    }
+    .octicon {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      vertical-align: -4px;
+      fill: currentColor;
+    }
+    .octicon.sm { width: 16px; height: 16px; vertical-align: -2px; }
+    .header {
+      padding: 26px 32px 20px;
+      background:
+        radial-gradient(circle at 88% 12%, rgba(45, 164, 78, .08), transparent 30%),
+        linear-gradient(180deg, #ffffff, #ffffff);
+    }
+    .kicker {
+      color: var(--green-mid);
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 2px;
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-top: 8px;
+    }
+    .title {
+      margin: 0;
+      font-size: 40px;
+      line-height: 1.15;
+      font-weight: 800;
+      letter-spacing: .3px;
+    }
+    .title .period {
+      color: var(--link);
+      font-size: 26px;
+      font-weight: 800;
+      margin-left: 10px;
+    }
+    .date-strip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 17px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .date-strip::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--green-mid);
+      box-shadow: 0 0 10px rgba(45, 164, 78, .7);
+    }
+    .stats-strip {
+      display: flex;
+      gap: 12px;
+      margin-top: 18px;
+    }
+    .stat-card {
+      flex: 1;
+      padding: 12px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+    }
+    .stat-label {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .stat-value {
+      margin-top: 4px;
+      font-family: var(--mono);
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .stat-value.green { color: var(--green); }
+    .body {
+      padding: 18px 32px 26px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .user-row {
+      display: grid;
+      grid-template-columns: 52px 52px minmax(0, 1fr) 150px;
+      align-items: center;
+      gap: 14px;
+      padding: 15px 18px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--card);
+    }
+    .rank-badge {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .user-row.top1 .rank-badge { background: var(--green); border-color: var(--green); color: #fff; }
+    .user-row.top2 .rank-badge { background: var(--green-mid); border-color: var(--green-mid); color: #fff; }
+    .user-row.top3 .rank-badge { background: #57ab5a; border-color: #57ab5a; color: #fff; }
+    .avatar-box {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .avatar {
+      position: relative;
+      z-index: 1;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .avatar-fallback {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .main { min-width: 0; }
+    .user-line {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 9px;
+    }
+    .username {
+      color: var(--link);
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 600;
+    }
+    .last-push {
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .trunc-badge {
+      padding: 2px 9px;
+      border: 1px solid rgba(154, 103, 0, .4);
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .bar-track {
+      height: 10px;
+      border-radius: 6px;
+      background: var(--track);
+      overflow: hidden;
+    }
+    .bar-fill {
+      height: 100%;
+      border-radius: 6px;
+      background: linear-gradient(90deg, var(--green-mid), var(--green));
+    }
+    .week-strip {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    .day-cell {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      background: #ebedf0;
+    }
+    .day-cell.l1 { background: #9be9a8; }
+    .day-cell.l2 { background: #40c463; }
+    .day-cell.l3 { background: #30a14e; }
+    .day-cell.miss { background: #ffffff; border: 1px dashed var(--border); }
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .chip .octicon { color: var(--muted); }
+    .chip.more {
+      background: #fff;
+      color: var(--ink);
+    }
+    .count-box {
+      text-align: right;
+    }
+    .count {
+      font-family: var(--mono);
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--ink);
+    }
+    .count em {
+      display: block;
+      margin-top: 5px;
+      font-family: var(--sans);
+      font-style: normal;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .empty {
+      padding: 30px;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 24px;
+      text-align: center;
+    }
+    .footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 32px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--muted);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .page-badge {
+      padding: 3px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--card);
+      font-family: var(--mono);
+      font-size: 15px;
+      font-weight: 700;
+    }
+  </style>
+
+  <div class="topbar">
+    <svg class="octicon" viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
+    <span><span class="path">github.com</span> · Pulse 订阅推送报告</span>
+  </div>
+
+  <div class="header">
+    <div class="kicker">GITHUB PULSE</div>
+    <div class="title-row">
+      <h1 class="title">订阅用户推送排行<span class="period">{{ period_label }}</span></h1>
+      <div class="date-strip">{{ date }}</div>
+    </div>
+    <div class="stats-strip">
+      <div class="stat-card">
+        <div class="stat-label">总推送次数</div>
+        <div class="stat-value green">{{ total_pushes }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">活跃用户</div>
+        <div class="stat-value">{{ active_users }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">涉及仓库</div>
+        <div class="stat-value">{{ total_repos }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="body">
+    {% if users %}
+    {% for user in users %}
+    <div class="user-row {{ user.rank_class }}">
+      <div class="rank-badge">{{ user.rank }}</div>
+      <div class="avatar-box">
+        <img class="avatar" src="{{ user.avatar }}" alt="" onerror="this.style.display='none'" />
+        <div class="avatar-fallback">{{ user.initial }}</div>
+      </div>
+      <div class="main">
+        <div class="user-line">
+          <span class="username">{{ user.username }}</span>
+          {% if user.truncated %}<span class="trunc-badge">事件流截断 ≥</span>{% endif %}
+          {% if user.last_push %}<span class="last-push">{{ user.last_push }}</span>{% endif %}
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width: {{ user.bar_pct }}%"></div></div>
+        {% if weekly %}
+        <div class="week-strip">
+          {% for day in user.days %}<div class="day-cell {{ day.cls }}" title="{{ day.label }}"></div>{% endfor %}
+        </div>
+        {% endif %}
+        <div class="chips">
+          {% for repo in user.repos %}
+          <span class="chip"><svg class="octicon sm" viewBox="0 0 16 16"><path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5Zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8ZM5 12.25a.25.25 0 0 1 .25-.25h3.5a.25.25 0 0 1 .25.25v3.25a.25.25 0 0 1-.4.2l-1.45-1.087a.249.249 0 0 0-.3 0L5.4 15.7a.25.25 0 0 1-.4-.2Z"/></svg>{{ repo.name }}</span>
+          {% endfor %}
+          {% if user.more_repos %}<span class="chip more">+{{ user.more_repos }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="count-box">
+        <div class="count">{{ user.pushes }}<em>次推送</em></div>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty">暂无推送数据。</div>
+    {% endif %}
+  </div>
+
+  <div class="footer">
+    <span>数据来自 GitHub 公开事件流（PushEvent）· 仅统计公开推送 · 由 Pulse 渲染</span>
+    <span class="page-badge">{{ page }}/{{ pages }}</span>
+  </div>
+</div>
+"""
+
+
 @register(
     PLUGIN_NAME,
     "Sora",
-    "每日推送 Epic 免费游戏、AI 行业简报与 Arena 代码模型排行榜。",
-    "0.4.0",
+    "每日推送 Epic 免费游戏、AI 行业简报、Arena 排行榜与 GitHub 用户推送排行。",
+    "0.5.0",
 )
 class PulsePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1876,6 +2287,9 @@ class PulsePlugin(Star):
         self._epic_client = EpicGamesClient()
         self._news_client = AiNewsClient()
         self._arena_client = ArenaLeaderboardClient()
+        self._github_client = GitHubEventsClient()
+        self._github_cache: dict[str, tuple[float, GitHubPushStats]] = {}
+        self._github_cache_ttl = 900.0
         self._halo_client = HaloSyncPostClient()
         self._plugin_data_dir = (
             Path(get_astrbot_data_path()) / "plugin_data" / PLUGIN_NAME
@@ -1922,6 +2336,30 @@ class PulsePlugin(Star):
                 )
             )
 
+        if self._config_bool("github_enabled", True):
+            self._tasks.append(
+                asyncio.create_task(
+                    self._scheduled_loop(
+                        job_name="github",
+                        time_key="github_daily_time",
+                        push_func=self._push_github_daily_to_targets,
+                    ),
+                    name="pulse_github_loop",
+                )
+            )
+
+        if self._config_bool("github_weekly_enabled", True):
+            self._tasks.append(
+                asyncio.create_task(
+                    self._scheduled_weekly_loop(
+                        job_name="github-weekly",
+                        time_key="github_weekly_time",
+                        push_func=self._push_github_weekly_to_targets,
+                    ),
+                    name="pulse_github_weekly_loop",
+                )
+            )
+
         logger.info(f"Pulse 已启动 {len(self._tasks)} 个定时任务")
 
     @filter.command_group("pulse")
@@ -1956,6 +2394,28 @@ class PulsePlugin(Star):
         limit = self._parse_arena_limit(event.message_str)
         chain = await self._build_arena_chain(limit)
         yield event.chain_result(chain)
+
+    @pulse.command("github")
+    async def pulse_github(self, event: AstrMessageEvent):
+        """立即发送订阅用户的 GitHub 推送排行；附加 week 参数可发送近 7 天周报。"""
+        weekly = self._parse_github_weekly_flag(event.message_str)
+        chains, message = await self._build_github_chains(weekly)
+        if not chains:
+            yield event.plain_result(message or "暂无推送数据。")
+            return
+        for chain in chains:
+            yield event.chain_result(chain)
+
+    @pulse.command("gh")
+    async def pulse_gh(self, event: AstrMessageEvent):
+        """pulse github 的别名。"""
+        weekly = self._parse_github_weekly_flag(event.message_str)
+        chains, message = await self._build_github_chains(weekly)
+        if not chains:
+            yield event.plain_result(message or "暂无推送数据。")
+            return
+        for chain in chains:
+            yield event.chain_result(chain)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("publish_news")
@@ -1998,13 +2458,23 @@ class PulsePlugin(Star):
         yield event.plain_result("已绑定当前会话到 Arena 代码模型排行榜推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("bind_github")
+    async def pulse_bind_github(self, event: AstrMessageEvent):
+        """将当前会话绑定到 GitHub 推送排行（日推与周报共用）。"""
+        self._add_target("github", event.unified_msg_origin)
+        yield event.plain_result("已绑定当前会话到 GitHub 推送排行（含周五周报）。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("bind")
     async def pulse_bind(self, event: AstrMessageEvent):
         """将当前会话同时绑定到全部定时推送。"""
         self._add_target("epic", event.unified_msg_origin)
         self._add_target("news", event.unified_msg_origin)
         self._add_target("arena", event.unified_msg_origin)
-        yield event.plain_result("已绑定当前会话到 Epic、AI 行业简报和 Arena 排行榜推送。")
+        self._add_target("github", event.unified_msg_origin)
+        yield event.plain_result(
+            "已绑定当前会话到 Epic、AI 行业简报、Arena 排行榜和 GitHub 推送。"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind_epic")
@@ -2028,12 +2498,20 @@ class PulsePlugin(Star):
         yield event.plain_result("已取消当前会话的 Arena 代码模型排行榜推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
+    @pulse.command("unbind_github")
+    async def pulse_unbind_github(self, event: AstrMessageEvent):
+        """取消当前会话的 GitHub 推送排行。"""
+        self._remove_target("github", event.unified_msg_origin)
+        yield event.plain_result("已取消当前会话的 GitHub 推送排行（含周五周报）。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind")
     async def pulse_unbind(self, event: AstrMessageEvent):
         """取消当前会话的全部 Pulse 定时推送。"""
         self._remove_target("epic", event.unified_msg_origin)
         self._remove_target("news", event.unified_msg_origin)
         self._remove_target("arena", event.unified_msg_origin)
+        self._remove_target("github", event.unified_msg_origin)
         yield event.plain_result("已取消当前会话的全部 Pulse 推送。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2043,11 +2521,13 @@ class PulsePlugin(Star):
         epic_targets = self._target_sessions("epic")
         news_targets = self._target_sessions("news")
         arena_targets = self._target_sessions("arena")
+        github_targets = self._target_sessions("github")
         text = (
             "Pulse 推送目标\n"
             f"Epic 免费游戏 ({len(epic_targets)}):\n{self._format_target_list(epic_targets)}\n\n"
             f"AI 行业简报 ({len(news_targets)}):\n{self._format_target_list(news_targets)}\n\n"
-            f"Arena 排行榜 ({len(arena_targets)}):\n{self._format_target_list(arena_targets)}"
+            f"Arena 排行榜 ({len(arena_targets)}):\n{self._format_target_list(arena_targets)}\n\n"
+            f"GitHub 推送 ({len(github_targets)}):\n{self._format_target_list(github_targets)}"
         )
         yield event.plain_result(text)
 
@@ -2096,6 +2576,7 @@ class PulsePlugin(Star):
         await self._epic_client.aclose()
         await self._news_client.aclose()
         await self._arena_client.aclose()
+        await self._github_client.aclose()
         await self._halo_client.aclose()
         logger.info("Pulse plugin stopped")
 
@@ -2108,6 +2589,24 @@ class PulsePlugin(Star):
         while True:
             try:
                 seconds = self._seconds_until_next_run(time_key)
+                logger.info(f"Pulse {job_name} next run in {seconds:.0f}s")
+                await asyncio.sleep(seconds)
+                await push_func()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"Pulse {job_name} scheduled task failed: {exc}", exc_info=True)
+                await asyncio.sleep(60)
+
+    async def _scheduled_weekly_loop(
+        self,
+        job_name: str,
+        time_key: str,
+        push_func: Callable[[], Awaitable[None]],
+    ):
+        while True:
+            try:
+                seconds = self._seconds_until_next_weekly_run(time_key)
                 logger.info(f"Pulse {job_name} next run in {seconds:.0f}s")
                 await asyncio.sleep(seconds)
                 await push_func()
@@ -2140,6 +2639,47 @@ class PulsePlugin(Star):
             chain_factory=lambda umo: self._build_arena_chain(),
             build_once=True,
         )
+
+    async def _push_github_daily_to_targets(self):
+        await self._push_github_kind_to_targets(weekly=False)
+
+    async def _push_github_weekly_to_targets(self):
+        await self._push_github_kind_to_targets(weekly=True)
+
+    async def _push_github_kind_to_targets(self, weekly: bool):
+        targets = self._target_sessions("github")
+        job_name = "github-weekly" if weekly else "github"
+        if not targets:
+            logger.warning(f"Pulse {job_name} has no targets; skip push")
+            return
+
+        chains, message = await self._build_github_chains(weekly)
+        if not chains:
+            logger.info(f"Pulse {job_name} skip push: {message}")
+            return
+
+        logger.info(
+            f"Pulse {job_name} pushing {len(chains)} image(s) to {len(targets)} target(s)"
+        )
+        for index, unified_msg_origin in enumerate(targets):
+            if index > 0:
+                delay = self._next_push_delay()
+                logger.info(f"Pulse {job_name} waits {delay:.1f}s before next target")
+                await asyncio.sleep(delay)
+
+            try:
+                for chain in chains:
+                    await self.context.send_message(
+                        unified_msg_origin,
+                        self._message_chain(chain),
+                    )
+                    if len(chains) > 1:
+                        await asyncio.sleep(1.2)
+            except Exception as exc:
+                logger.error(
+                    f"Pulse {job_name} push failed for {unified_msg_origin}: {exc}",
+                    exc_info=True,
+                )
 
     async def _push_to_targets(
         self,
@@ -2238,6 +2778,347 @@ class PulsePlugin(Star):
         except Exception as exc:
             logger.error(f"Pulse failed to fetch Arena leaderboard: {exc}", exc_info=True)
             return None
+
+    async def _build_github_chains(self, weekly: bool) -> tuple[list[list], str]:
+        """构建 GitHub 推送排行卡片，返回 (图片链列表, 提示文本)。
+
+        图片链列表可能包含多张（按 github_max_users_per_image 分页）；
+        无数据或失败时返回空列表和说明文本。
+        """
+        now = datetime.now(self._timezone())
+        day_series: dict[str, dict[str, int | None]] = {}
+        try:
+            if weekly:
+                stats_list, day_series, message = await self._fetch_github_weekly_stats(now)
+            else:
+                stats_list, message = await self._fetch_github_daily_stats(now)
+            if not stats_list:
+                return [], message
+
+            try:
+                urls = await self._render_github_images(
+                    stats_list, weekly, day_series, now
+                )
+                return [[Comp.Image.fromURL(url)] for url in urls], ""
+            except Exception as exc:
+                logger.error(f"Pulse failed to render GitHub image: {exc}", exc_info=True)
+                return [self._format_github_text(stats_list, weekly, now)], ""
+        except Exception as exc:
+            logger.error(f"Pulse failed to build GitHub card: {exc}", exc_info=True)
+            return [], "GitHub 推送卡片生成失败，请稍后再试。"
+
+    def _github_usernames(self) -> list[str]:
+        value = self.config.get("github_usernames", [])
+        if isinstance(value, str):
+            value = [part for part in value.split(",") if part.strip()]
+        names: list[str] = []
+        for item in value or []:
+            name = str(item).strip().lstrip("@")
+            if name and name not in names:
+                names.append(name)
+        return names
+
+    async def _fetch_github_day_stats(
+        self,
+        username: str,
+        day: datetime,
+        now: datetime,
+    ) -> GitHubPushStats | None:
+        """抓取某用户某天的推送统计（带 15 分钟内存缓存）。day 为当天 0 点。"""
+        date_str = day.strftime("%Y-%m-%d")
+        key = f"{username}|{date_str}"
+        cached = self._github_cache.get(key)
+        if cached:
+            timestamp, stats = cached
+            if monotonic() - timestamp < self._github_cache_ttl:
+                return stats
+
+        window_end = (
+            now
+            if date_str == now.strftime("%Y-%m-%d")
+            else day + timedelta(days=1) - timedelta(microseconds=1)
+        )
+        token = str(self.config.get("github_token", "")).strip()
+        try:
+            stats = await self._github_client.fetch_push_stats(
+                username,
+                day,
+                window_end,
+                token=token,
+            )
+        except GitHubRateLimitError as exc:
+            logger.warning(f"Pulse GitHub rate limited ({username}): {exc}")
+            return None
+        except Exception as exc:
+            logger.error(f"Pulse failed to fetch GitHub stats ({username}): {exc}", exc_info=True)
+            return None
+
+        self._github_cache[key] = (monotonic(), stats)
+        return stats
+
+    async def _fetch_github_daily_stats(
+        self,
+        now: datetime,
+    ) -> tuple[list[GitHubPushStats], str]:
+        """抓取全部订阅用户今日统计，过滤 0 推送用户，并落盘快照。"""
+        usernames = self._github_usernames()
+        if not usernames:
+            return [], "未配置订阅用户（github_usernames）。"
+
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        stats_list: list[GitHubPushStats] = []
+        for username in usernames:
+            stats = await self._fetch_github_day_stats(username, day_start, now)
+            if stats is not None:
+                stats_list.append(stats)
+
+        if not stats_list:
+            return [], "GitHub 数据获取失败（可能触发限流），可配置 github_token 后重试。"
+
+        date_str = now.strftime("%Y-%m-%d")
+        try:
+            github_save_daily_snapshot(self._plugin_data_dir, date_str, stats_list)
+            removed = github_cleanup_snapshots(self._plugin_data_dir, keep_days=8)
+            if removed:
+                logger.info(f"Pulse github snapshots cleanup removed {removed} file(s)")
+        except Exception as exc:
+            logger.error(f"Pulse failed to save github snapshot: {exc}", exc_info=True)
+
+        active = [stats for stats in stats_list if stats.pushes > 0]
+        active.sort(
+            key=lambda item: (
+                -item.pushes,
+                -(item.last_push.timestamp() if item.last_push else 0),
+            )
+        )
+        if not active:
+            return [], "今日订阅用户均无推送。"
+        return active, ""
+
+    async def _fetch_github_weekly_stats(
+        self,
+        now: datetime,
+    ) -> tuple[
+        list[GitHubPushStats],
+        dict[str, dict[str, int | None]],
+        str,
+    ]:
+        """聚合近 7 天快照；缺失日期回退实时抓取。"""
+        usernames = self._github_usernames()
+        if not usernames:
+            return [], {}, "未配置订阅用户（github_usernames）。"
+
+        dates = [now - timedelta(days=offset) for offset in range(6, -1, -1)]
+        date_strs = [day.strftime("%Y-%m-%d") for day in dates]
+
+        # 确保今天快照存在（每日任务通常已写；失败/未跑则实时抓取补齐）。
+        snapshots = github_load_snapshots(self._plugin_data_dir)
+        if date_strs[-1] not in snapshots:
+            await self._fetch_github_daily_stats(now)
+            snapshots = github_load_snapshots(self._plugin_data_dir)
+
+        per_user: dict[str, dict[str, GitHubPushStats | None]] = {
+            username: {} for username in usernames
+        }
+        for day, date_str in zip(dates, date_strs):
+            snapshot = snapshots.get(date_str)
+            for username in usernames:
+                stats = snapshot.stats_for(username) if snapshot else None
+                if stats is None:
+                    stats = await self._fetch_github_day_stats(username, day, now)
+                per_user[username][date_str] = stats
+
+        result: list[GitHubPushStats] = []
+        day_series: dict[str, dict[str, int | None]] = {}
+        for username in usernames:
+            day_map = per_user[username]
+            series: dict[str, int | None] = {
+                date_str: (stats.pushes if stats else None)
+                for date_str, stats in day_map.items()
+            }
+            day_series[username] = series
+
+            total = sum(count or 0 for count in series.values())
+            if total <= 0:
+                continue
+
+            repo_counts: dict[str, int] = {}
+            last_push = None
+            truncated = False
+            for stats in day_map.values():
+                if not stats:
+                    continue
+                for repo in stats.repos:
+                    repo_counts[repo.name] = repo_counts.get(repo.name, 0) + repo.pushes
+                if stats.last_push and (
+                    last_push is None or stats.last_push > last_push
+                ):
+                    last_push = stats.last_push
+                truncated = truncated or stats.truncated
+
+            repos = sorted(
+                repo_counts.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+            result.append(
+                GitHubPushStats(
+                    username=username,
+                    pushes=total,
+                    repos=[
+                        GitHubRepoCount(name=name, pushes=count)
+                        for name, count in repos
+                    ],
+                    last_push=last_push,
+                    truncated=truncated,
+                )
+            )
+
+        result.sort(
+            key=lambda item: (
+                -item.pushes,
+                -(item.last_push.timestamp() if item.last_push else 0),
+            )
+        )
+        if not result:
+            return [], day_series, "近 7 天订阅用户均无推送。"
+        return result, day_series, ""
+
+    async def _render_github_images(
+        self,
+        stats_list: list[GitHubPushStats],
+        weekly: bool,
+        day_series: dict[str, dict[str, int | None]],
+        now: datetime,
+    ) -> list[str]:
+        max_per = max(1, min(self._config_int("github_max_users_per_image", 8), 20))
+        max_repos = max(1, self._config_int("github_max_repos_per_user", 3))
+        tz = self._timezone()
+        pages = [
+            stats_list[index : index + max_per]
+            for index in range(0, len(stats_list), max_per)
+        ]
+        dates = [now - timedelta(days=offset) for offset in range(6, -1, -1)]
+        period_label = "近 7 天" if weekly else "今日"
+        urls: list[str] = []
+
+        for page_index, page_users in enumerate(pages, start=1):
+            max_pushes = max((user.pushes for user in page_users), default=1)
+            users_data = []
+            total_repos: set[str] = set()
+            for user in page_users:
+                total_repos.update(repo.name for repo in user.repos)
+                users_data.append(
+                    self._github_user_data(
+                        user,
+                        weekly,
+                        day_series.get(user.username, {}),
+                        dates,
+                        max_pushes,
+                        max_repos,
+                        tz,
+                        rank=len(users_data) + 1,
+                    )
+                )
+
+            date_label = (
+                f"{dates[0]:%m-%d} ~ {dates[-1]:%m-%d}"
+                if weekly
+                else now.strftime("%Y-%m-%d")
+            )
+            data = {
+                "period_label": period_label,
+                "date": date_label,
+                "total_pushes": sum(user.pushes for user in page_users),
+                "active_users": len(page_users),
+                "total_repos": len(total_repos),
+                "users": users_data,
+                "weekly": weekly,
+                "page": page_index,
+                "pages": len(pages),
+            }
+            urls.append(
+                await self.html_render(
+                    GITHUB_HTML_TEMPLATE,
+                    data,
+                    options=HTML_RENDER_OPTIONS,
+                )
+            )
+        return urls
+
+    def _github_user_data(
+        self,
+        stats: GitHubPushStats,
+        weekly: bool,
+        series: dict[str, int | None],
+        dates: list[datetime],
+        max_pushes: int,
+        max_repos: int,
+        tz: tzinfo,
+        *,
+        rank: int,
+    ) -> dict:
+        rank_class = {1: "top1", 2: "top2", 3: "top3"}.get(rank, "")
+        if stats.last_push:
+            last_label = (
+                f"最近 {stats.last_push.astimezone(tz):%m-%d %H:%M}"
+                if weekly
+                else f"最近 {stats.last_push.astimezone(tz):%H:%M}"
+            )
+        else:
+            last_label = ""
+        bar_pct = max(3.0, round(stats.pushes / max_pushes * 100, 1)) if stats.pushes else 0.0
+
+        days = []
+        if weekly:
+            for day in dates:
+                count = series.get(day.strftime("%Y-%m-%d"))
+                if count is None:
+                    days.append({"cls": "miss", "label": f"{day:%m-%d} · 数据缺失"})
+                    continue
+                level = 0 if count == 0 else 1 if count <= 2 else 2 if count <= 4 else 3
+                days.append(
+                    {
+                        "cls": f"l{level}" if level else "",
+                        "label": f"{day:%m-%d} · {count} 次推送",
+                    }
+                )
+
+        repos = stats.repos[:max_repos]
+        return {
+            "rank": rank,
+            "rank_class": rank_class,
+            "username": html.escape(stats.username),
+            "initial": html.escape((stats.username[:1] or "?").upper()),
+            "avatar": github_avatar_url(stats.username),
+            "truncated": stats.truncated,
+            "last_push": last_label,
+            "bar_pct": bar_pct,
+            "pushes": stats.pushes,
+            "repos": [
+                {"name": html.escape(repo.name)} for repo in repos
+            ],
+            "more_repos": len(stats.repos) - len(repos),
+            "days": days,
+        }
+
+    def _format_github_text(
+        self,
+        stats_list: list[GitHubPushStats],
+        weekly: bool,
+        now: datetime,
+    ) -> list:
+        period_label = "近 7 天" if weekly else "今日"
+        lines = [f"GitHub 订阅用户推送排行 | {period_label} {now:%Y-%m-%d}"]
+        for index, stats in enumerate(stats_list, start=1):
+            repo_names = "、".join(repo.name for repo in stats.repos[:3])
+            suffix = f"（{repo_names}）" if repo_names else ""
+            lines.append(f"{index}. @{stats.username}：{stats.pushes} 次推送{suffix}")
+        return [Comp.Plain("\n".join(lines))]
+
+    def _parse_github_weekly_flag(self, message_text: str) -> bool:
+        return bool(
+            re.search(r"\b(?:github|gh)\s+week\b", message_text or "", flags=re.I)
+        )
 
     async def _fetch_epic_games(self, now: datetime) -> list[EpicFreeGame]:
         try:
@@ -3191,6 +4072,21 @@ AI
         next_run = datetime.combine(now.date(), run_time, tzinfo=tz)
         if next_run <= now:
             next_run += timedelta(days=1)
+        return max((next_run - now).total_seconds(), 1.0)
+
+    def _seconds_until_next_weekly_run(self, time_key: str) -> float:
+        """计算到下一个周五 HH:MM 的等待秒数（用于 GitHub 周报）。"""
+        tz = self._timezone()
+        now = datetime.now(tz)
+        run_time = self._parse_time(str(self.config.get(time_key, "22:30")))
+        days_ahead = (4 - now.weekday()) % 7  # weekday(): 周一=0 ... 周五=4
+        next_run = datetime.combine(
+            now.date() + timedelta(days=days_ahead),
+            run_time,
+            tzinfo=tz,
+        )
+        if next_run <= now:
+            next_run += timedelta(days=7)
         return max((next_run - now).total_seconds(), 1.0)
 
     def _parse_time(self, value: str) -> time:
