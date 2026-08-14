@@ -51,6 +51,8 @@ class GitHubPushStats:
 class GitHubEventsClient:
     def __init__(self, timeout: float = 20.0, trust_env: bool = False):
         self._client = httpx.AsyncClient(timeout=timeout, trust_env=trust_env)
+        # 最近一次响应的核心配额余量（无鉴权 60/h，带 token 5000/h）。
+        self.quota_remaining: int | None = None
 
     async def aclose(self):
         await self._client.aclose()
@@ -118,6 +120,7 @@ class GitHubEventsClient:
                 params={"per_page": EVENTS_PER_PAGE, "page": page},
                 headers=headers,
             )
+            self._track_quota(response)
             self._check_response(response, username)
             events = response.json()
             if not isinstance(events, list):
@@ -138,6 +141,7 @@ class GitHubEventsClient:
             params={"per_page": EVENTS_PER_PAGE, "page": MAX_EVENT_PAGES + 1},
             headers=headers,
         )
+        self._track_quota(probe)
         try:
             self._check_response(probe, username)
             probe_events = probe.json()
@@ -147,8 +151,14 @@ class GitHubEventsClient:
             truncated = False
         return records, truncated
 
+    def _track_quota(self, response: httpx.Response):
+        remaining = response.headers.get("x-ratelimit-remaining", "")
+        if remaining.isdigit():
+            self.quota_remaining = int(remaining)
+
     def _check_response(self, response: httpx.Response, username: str):
         if response.status_code in (403, 429):
+            self.quota_remaining = 0
             remaining = response.headers.get("x-ratelimit-remaining", "")
             if remaining == "0" or response.status_code == 429:
                 reset = response.headers.get("x-ratelimit-reset", "")

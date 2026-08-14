@@ -2824,13 +2824,19 @@ class PulsePlugin(Star):
         day: datetime,
         now: datetime,
     ) -> GitHubPushStats | None:
-        """抓取某用户某天的推送统计（带 15 分钟内存缓存）。day 为当天 0 点。"""
+        """抓取某用户某天的推送统计（带内存缓存）。day 为当天 0 点。
+
+        当天数据 15 分钟缓存；过去日期数据不变，缓存 6 小时，
+        避免周报回补与重复触发指令浪费无 token 配额。
+        """
         date_str = day.strftime("%Y-%m-%d")
+        is_today = date_str == now.strftime("%Y-%m-%d")
+        ttl = self._github_cache_ttl if is_today else 6 * 3600.0
         key = f"{username}|{date_str}"
         cached = self._github_cache.get(key)
         if cached:
             timestamp, stats = cached
-            if monotonic() - timestamp < self._github_cache_ttl:
+            if monotonic() - timestamp < ttl:
                 return stats
 
         window_end = (
@@ -2918,14 +2924,39 @@ class PulsePlugin(Star):
             snapshots = github_load_snapshots(self._plugin_data_dir)
 
         per_user: dict[str, dict[str, GitHubPushStats | None]] = {
-            username: {} for username in usernames
+            username: {date_str: None for date_str in date_strs}
+            for username in usernames
         }
+
+        # 1) 先用快照填充。
         for day, date_str in zip(dates, date_strs):
             snapshot = snapshots.get(date_str)
+            if not snapshot:
+                continue
             for username in usernames:
-                stats = snapshot.stats_for(username) if snapshot else None
-                if stats is None:
-                    stats = await self._fetch_github_day_stats(username, day, now)
+                stats = snapshot.stats_for(username)
+                if stats is not None:
+                    per_user[username][date_str] = stats
+
+        # 2) 缺失日期回退实时抓取：从近到远，受无 token 配额预算保护
+        #    （预留 5 次请求给日推等任务，避免首次安装时耗尽 60 次/h）。
+        quota_reserve = 5
+        backfill_stopped = False
+        for day, date_str in reversed(list(zip(dates, date_strs))):
+            if backfill_stopped:
+                break
+            for username in usernames:
+                if per_user[username][date_str] is not None:
+                    continue
+                quota = self._github_client.quota_remaining
+                if quota is not None and quota <= quota_reserve:
+                    logger.warning(
+                        f"Pulse github weekly backfill stopped at {date_str}: "
+                        f"API quota low ({quota} remaining)"
+                    )
+                    backfill_stopped = True
+                    break
+                stats = await self._fetch_github_day_stats(username, day, now)
                 per_user[username][date_str] = stats
 
         result: list[GitHubPushStats] = []
