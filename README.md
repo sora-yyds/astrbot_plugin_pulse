@@ -91,51 +91,61 @@ pip install -r requirements.txt
 - `/pulse targets`：查看当前推送目标。
 - `/pulse providers`：查看 AstrBot 已配置的 LLM Provider，已选中的 Provider 会用 `*` 标记。
 
-## 核心配置
+## 配置
 
-- `enabled`：启用 Pulse 插件。
-- `timezone`：调度时区，默认 `Asia/Shanghai`。
-- `push_delay_min_seconds` / `push_delay_max_seconds`：多目标推送之间的随机延迟范围。
-- `epic_enabled`：启用 Epic 免费游戏推送。
-- `epic_daily_time`：Epic 每日推送时间，默认 `08:20`。
-- `epic_target_sessions`：Epic 推送目标会话。
-- `send_epic_images`：是否展示 Epic 游戏封面。
-- `epic_max_items`：Epic 单次最多展示数量。
-- `news_enabled`：启用 AI 行业简报推送。
-- `news_daily_time`：AI 简报每日推送时间，默认 `08:35`。
-- `news_target_sessions`：AI 简报推送目标会话。
-- `news_endpoint`：Cloudflare Worker 聚合接口地址。
-- `news_bearer_token`：与 Worker `SECRET_TOKEN` 一致的 Bearer Token。
-- `news_llm_provider_ids`：AI 简报专用 LLM Provider，可多选。[没有 key？现在获取](https://one.gloscai.com/keys)
-- `news_max_items`：AI 简报最多处理资讯数，建议不超过 `15`。
+配置在 AstrBot WebUI 的插件配置页按平台分组展示：**通用设置 / Epic / AI 简报 / Arena / GitHub / Halo**。以下按分组列出（`分组.键名` 表示分组内的配置项）。
 
-`news_llm_provider_ids` 留空时使用当前会话默认 Provider；选择多个 Provider 时按顺序尝试，失败自动切换到下一个；只选择一个 Provider 时失败后等待 10 秒重试一次。
+### 通用设置（general）
 
-## Arena 排行榜配置
+- `general.enabled`：启用 Pulse 定时推送。
+- `general.timezone`：调度时区，默认 `Asia/Shanghai`。
+- `general.push_delay_min_seconds` / `general.push_delay_max_seconds`：多目标推送之间的随机延迟范围。
 
-- `arena_enabled`：启用 Arena 排行榜定时推送。
-- `arena_daily_time`：Arena 排行榜每日推送时间，默认 `09:00`。
-- `arena_target_sessions`：Arena 排行榜推送目标会话。
-- `arena_leaderboard_url`：要抓取的排行榜页面 URL，默认 `https://arena.ai/leaderboard/code`（Code Arena WebDev 整体排行）。也可填写分类子榜，例如：
+### Epic 免费游戏（epic）
+
+- `epic.enabled`：启用 Epic 免费游戏推送。
+- `epic.daily_time`：每日推送时间，默认 `08:20`。
+- `epic.target_sessions`：推送目标会话。
+- `epic.send_images`：是否展示游戏封面。
+- `epic.max_items`：单次最多展示数量。
+
+### AI 行业简报（news）
+
+- `news.enabled`：启用 AI 行业简报推送。
+- `news.daily_time`：每日推送时间，默认 `08:35`。
+- `news.target_sessions`：推送目标会话。
+- `news.endpoint`：Cloudflare Worker 聚合接口地址。
+- `news.bearer_token`：与 Worker `SECRET_TOKEN` 一致的 Bearer Token。
+- `news.llm_provider_ids`：专用 LLM Provider，可多选。[没有 key？现在获取](https://one.gloscai.com/keys)
+- `news.max_items`：最多处理资讯数，建议不超过 `15`。
+
+`news.llm_provider_ids` 留空时使用当前会话默认 Provider；选择多个 Provider 时按顺序尝试，失败自动切换到下一个；只选择一个 Provider 时失败后等待 10 秒重试一次。
+
+### Arena 排行榜（arena）
+
+- `arena.enabled`：启用 Arena 排行榜定时推送。
+- `arena.daily_time`：每日推送时间，默认 `09:00`。
+- `arena.target_sessions`：推送目标会话。
+- `arena.leaderboard_url`：要抓取的排行榜页面 URL，默认 `https://arena.ai/leaderboard/code`（Code Arena WebDev 整体排行）。也可填写分类子榜，例如：
   - `https://arena.ai/leaderboard/code/webdev-fullstack`
   - `https://arena.ai/leaderboard/code/webdev-frontend`
   - `https://arena.ai/leaderboard/code/webdev-html`
   - `https://arena.ai/leaderboard/code/webdev-react`
-- `arena_max_models`：图片卡片最多展示的模型行数，默认 `10`。
+- `arena.max_models`：图片卡片最多展示的模型行数，默认 `10`。
 
 排行榜数据直接抓取自 arena.ai 官方页面：插件以 Next.js RSC（`RSC: 1`）请求头获取页面，并从返回的 flight payload 中解析 `entries` 数据（排名、分数、置信区间、票数、价格、上下文长度、许可证等），无需第三方接口。
 
-## GitHub 提交排行配置
+### GitHub 提交排行（github）
 
-- `github_enabled`：启用 GitHub 提交排行定时推送。
-- `github_daily_time`：GitHub 每日推送时间，默认 `22:00`，统计当天 00:00 至推送时刻的公开提交。
-- `github_weekly_enabled`：启用周五周报，默认 `true`。
-- `github_weekly_time`：周报推送时间（周五），默认 `22:30`。
-- `github_target_sessions`：GitHub 提交排行推送目标会话（日推与周报共用）。
-- `github_usernames`：订阅的 GitHub 用户名，逗号分隔多个，例如 `torvalds, soulter`。
-- `github_token`：可选 GitHub Personal Access Token。留空使用无鉴权提交搜索（10 次/分钟）；订阅用户较多时可填入以提升至 30 次/分钟。仅保存在 AstrBot 本地配置。
-- `github_max_users_per_image`：每张图片最多展示用户数，默认 `8`，超出自动拆分多张图片依次推送。
-- `github_max_repos_per_user`：每个用户最多展示仓库数，默认 `3`，超出以 `+N` 折叠。
+- `github.enabled`：启用 GitHub 提交排行定时推送。
+- `github.daily_time`：每日推送时间，默认 `22:00`，统计当天 00:00 至推送时刻的公开提交。
+- `github.weekly_enabled`：启用周五周报，默认 `true`。
+- `github.weekly_time`：周报推送时间（周五），默认 `22:30`。
+- `github.target_sessions`：推送目标会话（日推与周报共用）。
+- `github.usernames`：订阅的 GitHub 用户名，逗号分隔多个，例如 `torvalds, soulter`。
+- `github.token`：可选 GitHub Personal Access Token。留空使用无鉴权提交搜索（10 次/分钟）；订阅用户较多时可填入以提升至 30 次/分钟。仅保存在 AstrBot 本地配置。
+- `github.max_users_per_image`：每张图片最多展示用户数，默认 `8`，超出自动拆分多张图片依次推送。
+- `github.max_repos_per_user`：每个用户最多展示仓库数，默认 `3`，超出以 `+N` 折叠。
 
 行为说明：
 
@@ -147,19 +157,19 @@ pip install -r requirements.txt
 - 抓取结果带内存缓存（当天 15 分钟、过去日期 6 小时），避免频繁触发指令耗尽无 token 配额。
 - 不存在的用户名会在 0 提交时通过用户接口校验并提示，避免被误判为 0 提交。
 
-## Halo 发布配置
+### Halo 文章发布（halo）
 
-- `halo_publish_enabled`：启用 AI 长文自动发布到 Halo。
-- `halo_site_url`：Halo 站点地址，例如 `https://blog.example.com`；也可以填写完整 SyncPostAI articles 接口地址。
-- `halo_syncpost_token`：SyncPostAI 插件中配置的推送 Token。
-- `halo_publish_direct`：是否直接发布文章，默认 `true`。
-- `article_statement_enabled`：是否在文章底部添加 AI 生成声明。
-- `halo_article_author`：写入 Markdown front matter 的 `author` 字段。
-- `halo_article_cover`：写入 Markdown front matter 的 `cover` 字段，支持网络地址或本地路径。
-- `halo_excerpt_min_chars` / `halo_excerpt_max_chars`：AI 生成摘要的字数范围。
-- `halo_slug_prefix`：文章 slug 前缀，默认生成 `ai-news-YYYYMMDD`。
-- `halo_publish_tags`：发布到 Halo 时附加的默认标签；留空时由 AI 生成。
-- `halo_publish_categories`：发布到 Halo 时附加的默认分类。
+- `halo.publish_enabled`：启用 AI 长文自动发布到 Halo。
+- `halo.site_url`：Halo 站点地址，例如 `https://blog.example.com`；也可以填写完整 SyncPostAI articles 接口地址。
+- `halo.syncpost_token`：SyncPostAI 插件中配置的推送 Token。
+- `halo.publish_direct`：是否直接发布文章，默认 `true`。
+- `halo.article_statement_enabled`：是否在文章底部添加 AI 生成声明。
+- `halo.article_author`：写入 Markdown front matter 的 `author` 字段。
+- `halo.article_cover`：写入 Markdown front matter 的 `cover` 字段，支持网络地址或本地路径。
+- `halo.excerpt_min_chars` / `halo.excerpt_max_chars`：AI 生成摘要的字数范围。
+- `halo.slug_prefix`：文章 slug 前缀，默认生成 `ai-news-YYYYMMDD`。
+- `halo.publish_tags`：发布到 Halo 时附加的默认标签；留空时由 AI 生成。
+- `halo.publish_categories`：发布到 Halo 时附加的默认分类。
 
 Pulse 会调用：
 

@@ -2,7 +2,7 @@ name: astrbot_plugin_pulse
 display_name: Pulse 每日推送
 short_desc: 每日推送 Epic 免费游戏、AI 行业简报、Arena 排行榜与 GitHub 用户提交排行。
 desc: 基于 AstrBot 原生插件生命周期、主动消息、HTML 渲染和 LLM Provider，推送 Epic 免费游戏、AI 行业简报、Arena 代码模型排行榜和 GitHub 订阅用户提交排行（含周五周报），并保存网站发布用 Markdown 长文。
-version: v0.5.1
+version: v0.5.2
 author: Sora
 repo: https://github.com/sora-yyds/astrbot_plugin_pulse
 support_platforms:

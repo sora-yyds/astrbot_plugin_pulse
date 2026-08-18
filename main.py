@@ -72,6 +72,180 @@ HTML_RENDER_OPTIONS = {
 
 SYNCPOST_PATH = "/apis/api.syncpostai.sora.run/v1alpha1/articles"
 
+# 配置分组：扁平键 -> 所属分组与子键。AstrBot WebUI 按分组（object）展示，
+# 插件内部仍以扁平键读取，由 _GroupedConfigView 完成映射。
+PLUGIN_CONFIG_GROUPS: dict[str, dict[str, str]] = {
+    "general": {
+        "enabled": "enabled",
+        "timezone": "timezone",
+        "push_delay_min_seconds": "push_delay_min_seconds",
+        "push_delay_max_seconds": "push_delay_max_seconds",
+    },
+    "epic": {
+        "epic_enabled": "enabled",
+        "epic_daily_time": "daily_time",
+        "epic_target_sessions": "target_sessions",
+        "send_epic_images": "send_images",
+        "epic_max_items": "max_items",
+    },
+    "news": {
+        "news_enabled": "enabled",
+        "news_daily_time": "daily_time",
+        "news_target_sessions": "target_sessions",
+        "news_endpoint": "endpoint",
+        "news_bearer_token": "bearer_token",
+        "news_llm_provider_ids": "llm_provider_ids",
+        "news_max_items": "max_items",
+    },
+    "arena": {
+        "arena_enabled": "enabled",
+        "arena_daily_time": "daily_time",
+        "arena_target_sessions": "target_sessions",
+        "arena_leaderboard_url": "leaderboard_url",
+        "arena_max_models": "max_models",
+    },
+    "github": {
+        "github_enabled": "enabled",
+        "github_daily_time": "daily_time",
+        "github_weekly_enabled": "weekly_enabled",
+        "github_weekly_time": "weekly_time",
+        "github_target_sessions": "target_sessions",
+        "github_usernames": "usernames",
+        "github_token": "token",
+        "github_max_users_per_image": "max_users_per_image",
+        "github_max_repos_per_user": "max_repos_per_user",
+    },
+    "halo": {
+        "halo_publish_enabled": "publish_enabled",
+        "halo_site_url": "site_url",
+        "halo_syncpost_token": "syncpost_token",
+        "halo_publish_direct": "publish_direct",
+        "article_statement_enabled": "article_statement_enabled",
+        "halo_article_author": "article_author",
+        "halo_article_cover": "article_cover",
+        "halo_excerpt_min_chars": "excerpt_min_chars",
+        "halo_excerpt_max_chars": "excerpt_max_chars",
+        "halo_slug_prefix": "slug_prefix",
+        "halo_publish_tags": "publish_tags",
+        "halo_publish_categories": "publish_categories",
+    },
+}
+
+# 旧版扁平配置的顶层键（用于识别并迁移存量配置）。
+_LEGACY_FLAT_KEY_PREFIXES = ("epic_", "news_", "arena_", "github_", "halo_")
+_LEGACY_FLAT_TOP_KEYS = (
+    "enabled",
+    "timezone",
+    "push_delay_min_seconds",
+    "push_delay_max_seconds",
+)
+
+
+class _GroupedConfigView:
+    """把 AstrBot 的分组配置映射为插件内部使用的扁平键视图。
+
+    AstrBot 传入的配置按平台分组（general/epic/news/arena/github/halo），
+    插件代码仍使用历史扁平键（如 epic_enabled）；本视图负责双向映射，
+    save_config 仍写回分组结构。
+    """
+
+    def __init__(self, raw):
+        object.__setattr__(self, "_raw", raw)
+
+    def _locate(self, key: str) -> tuple[str | None, str]:
+        for group, mapping in PLUGIN_CONFIG_GROUPS.items():
+            if key in mapping:
+                return group, mapping[key]
+        return None, key
+
+    def get(self, key: str, default=None):
+        group, subkey = self._locate(key)
+        if group is None:
+            value = self._raw.get(key)
+            return default if value is None else value
+        group_conf = self._raw.get(group)
+        if isinstance(group_conf, dict) and subkey in group_conf:
+            return group_conf[subkey]
+        # 兼容未被迁移的顶层遗留键。
+        if key in self._raw:
+            return self._raw[key]
+        return default
+
+    def __getitem__(self, key: str):
+        value = self.get(key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __setitem__(self, key: str, value):
+        group, subkey = self._locate(key)
+        if group is None:
+            self._raw[key] = value
+            return
+        group_conf = self._raw.get(group)
+        if not isinstance(group_conf, dict):
+            group_conf = {}
+            self._raw[group] = group_conf
+        group_conf[subkey] = value
+
+    def __contains__(self, key: str) -> bool:
+        return self.get(key) is not None
+
+    def save_config(self, *args, **kwargs):
+        return self._raw.save_config(*args, **kwargs)
+
+    def __getattr__(self, name: str):
+        return getattr(self._raw, name)
+
+
+def _migrate_legacy_flat_config():
+    """把旧版扁平配置迁移为分组结构。
+
+    在插件模块导入阶段执行（AstrBot 在导入插件后才对配置做 schema 对账，
+    对账会删除 schema 之外的旧键），因此必须在此之前完成迁移，
+    否则用户的存量配置（如已绑定的目标会话）会丢失。
+    """
+    try:
+        config_path = (
+            Path(get_astrbot_data_path()) / "config" / f"{PLUGIN_NAME}_config.json"
+        )
+        if not config_path.exists():
+            return
+        raw = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(raw, dict):
+            return
+        legacy_keys = {
+            key
+            for key in raw
+            if key in _LEGACY_FLAT_TOP_KEYS
+            or key.startswith(_LEGACY_FLAT_KEY_PREFIXES)
+        }
+        if not legacy_keys:
+            return
+
+        migrated: dict[str, Any] = {}
+        for group, mapping in PLUGIN_CONFIG_GROUPS.items():
+            group_conf: dict[str, Any] = {}
+            for flat_key, subkey in mapping.items():
+                if flat_key in raw:
+                    group_conf[subkey] = raw.pop(flat_key)
+            migrated[group] = group_conf
+        # 保留未知顶层键（AstrBot 对账时会再处理）。
+        migrated.update(raw)
+
+        config_path.write_text(
+            json.dumps(migrated, ensure_ascii=False, indent=2),
+            encoding="utf-8-sig",
+        )
+        logger.info("Pulse 已将旧版扁平配置迁移为分组结构")
+    except Exception:
+        # 迁移失败不应阻断插件加载；AstrBot 会以默认配置兜底。
+        pass
+
+
+# 模块导入即执行（先于 AstrBot 的配置 schema 对账）。
+_migrate_legacy_flat_config()
+
 
 class HaloPublishError(Exception):
     """Raised when a generated article cannot be published to Halo."""
@@ -2278,12 +2452,12 @@ GITHUB_HTML_TEMPLATE = """
     PLUGIN_NAME,
     "Sora",
     "每日推送 Epic 免费游戏、AI 行业简报、Arena 排行榜与 GitHub 用户提交排行。",
-    "0.5.1",
+    "0.5.2",
 )
 class PulsePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        self.config = config
+        self.config = _GroupedConfigView(config)
         self._tasks: list[asyncio.Task] = []
         self._epic_client = EpicGamesClient()
         self._news_client = AiNewsClient()
