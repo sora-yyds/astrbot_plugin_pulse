@@ -1,202 +1,212 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from time import monotonic
 
 import httpx
 
 
 GITHUB_API_BASE = "https://api.github.com"
-EVENTS_PER_PAGE = 100
-# GitHub 公开事件流只保留每个用户最近 300 条事件（3 页），无法继续翻页。
-MAX_EVENT_PAGES = 3
+SEARCH_COMMITS_ENDPOINT = f"{GITHUB_API_BASE}/search/commits"
+# 提交搜索接口要求预览 Accept 头（cloak-preview）。
+SEARCH_ACCEPT = "application/vnd.github.cloak-preview+json"
+SEARCH_PER_PAGE = 100
+# 搜索结果最多返回 1000 条（10 页）。
+MAX_SEARCH_PAGES = 10
+
+# 无 token 搜索配额 10 次/分钟；带 token 30 次/分钟。留出余量。
+_UNAUTH_SEARCH_INTERVAL = 6.8
+_AUTH_SEARCH_INTERVAL = 2.5
 
 _DATE_FILE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.json$")
 
 
 class GitHubEventsError(Exception):
-    """Raised when GitHub events cannot be fetched."""
+    """Raised when GitHub data cannot be fetched."""
 
 
 class GitHubRateLimitError(GitHubEventsError):
     """Raised when the GitHub API rate limit is exhausted."""
 
 
-@dataclass(frozen=True)
-class GitHubPushRecord:
-    created_at: datetime  # aware datetime (UTC)
-    repo: str
-    branch: str
+class GitHubUserNotFoundError(GitHubEventsError):
+    """Raised when the subscribed GitHub username does not exist."""
 
 
 @dataclass(frozen=True)
 class GitHubRepoCount:
     name: str
-    pushes: int
+    commits: int
 
 
 @dataclass(frozen=True)
-class GitHubPushStats:
+class GitHubCommitStats:
     username: str
-    pushes: int
+    commits: int
     repos: list[GitHubRepoCount]
-    last_push: datetime | None
-    truncated: bool
+    last_commit: datetime | None
+    truncated: bool  # 搜索结果超出 1000 条，仓库列表可能不完整
 
 
-class GitHubEventsClient:
-    def __init__(self, timeout: float = 20.0, trust_env: bool = False):
+class GitHubCommitSearchClient:
+    """通过 GitHub 提交搜索接口按天统计用户提交数与涉及仓库。
+
+    查询形如 `author:{u} author-date:{start_iso}..{end_iso}`，其中起止时间
+    为插件时区当天窗口换算成的 UTC ISO 时间；total_count 即为该窗口内
+    精确提交数。仅统计公开仓库提交，无需 token（可选 token 提升配额）。
+    """
+
+    def __init__(self, timeout: float = 25.0, trust_env: bool = False):
         self._client = httpx.AsyncClient(timeout=timeout, trust_env=trust_env)
-        # 最近一次响应的核心配额余量（无鉴权 60/h，带 token 5000/h）。
+        # 最近一次响应的搜索配额余量（无鉴权 10/分钟，带 token 30/分钟）。
         self.quota_remaining: int | None = None
+        self._last_search_at = 0.0
 
     async def aclose(self):
         await self._client.aclose()
 
-    async def fetch_push_stats(
+    async def fetch_commit_stats(
         self,
         username: str,
         window_start: datetime,
         window_end: datetime,
         token: str = "",
-    ) -> GitHubPushStats:
-        """统计某用户在 [window_start, window_end] 内的推送次数与涉及仓库。
+    ) -> GitHubCommitStats:
+        """统计某用户在 [window_start, window_end] 内的提交数与涉及仓库。
 
-        window_start/window_end 必须是带时区的 datetime；内部按该时区聚合。
+        window_start/window_end 必须带时区；查询按该时区窗口的 UTC 等价区间执行。
         """
         if window_start.tzinfo is None or window_end.tzinfo is None:
-            raise ValueError("GitHub push stats window must be timezone-aware")
+            raise ValueError("GitHub commit stats window must be timezone-aware")
 
-        records, truncated = await self._fetch_push_records(username, token)
+        start_iso = window_start.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = window_end.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        query = f"author:{username} author-date:{start_iso}..{end_iso}"
+
+        items: list[dict[str, Any]] = []
+        total_count = 0
+        for page in range(1, MAX_SEARCH_PAGES + 1):
+            response = await self._search(query, page, token)
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise GitHubEventsError(f"GitHub 提交搜索返回异常数据: {username}")
+            if page == 1:
+                total_count = int(payload.get("total_count") or 0)
+            page_items = payload.get("items")
+            if not isinstance(page_items, list) or not page_items:
+                break
+            items.extend(item for item in page_items if isinstance(item, dict))
+            if len(page_items) < SEARCH_PER_PAGE:
+                break
+
+        if total_count == 0:
+            # 不存在的用户名会让查询退化，必须校验存在性以区分「0 提交」与「用户不存在」。
+            if not await self.fetch_user_exists(username, token):
+                raise GitHubUserNotFoundError(f"GitHub 用户不存在: {username}")
 
         repo_counts: dict[str, int] = {}
-        push_count = 0
-        last_push: datetime | None = None
-        for record in records:
-            local_time = record.created_at.astimezone(window_start.tzinfo)
-            if not (window_start <= local_time <= window_end):
+        last_commit: datetime | None = None
+        for item in items:
+            repo = item.get("repository")
+            commit = item.get("commit")
+            if not isinstance(repo, dict) or not isinstance(commit, dict):
                 continue
-            push_count += 1
-            repo_counts[record.repo] = repo_counts.get(record.repo, 0) + 1
-            if last_push is None or record.created_at > last_push:
-                last_push = record.created_at
+            repo_name = str(repo.get("full_name") or "").strip()
+            if repo_name:
+                repo_counts[repo_name] = repo_counts.get(repo_name, 0) + 1
+            commit_time = _parse_datetime(
+                (commit.get("author") or {}).get("date")
+            )
+            if commit_time and (last_commit is None or commit_time > last_commit):
+                last_commit = commit_time
 
         repos = [
-            GitHubRepoCount(name=name, pushes=count)
+            GitHubRepoCount(name=name, commits=count)
             for name, count in sorted(
                 repo_counts.items(),
                 key=lambda item: (-item[1], item[0]),
             )
         ]
-        return GitHubPushStats(
+        return GitHubCommitStats(
             username=username,
-            pushes=push_count,
+            commits=total_count,
             repos=repos,
-            last_push=last_push,
-            truncated=truncated,
+            last_commit=last_commit,
+            truncated=total_count > len(items),
         )
 
-    async def _fetch_push_records(
+    async def fetch_user_exists(self, username: str, token: str = "") -> bool:
+        headers = {"User-Agent": "astrbot-pulse", "Accept": "application/vnd.github+json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        response = await self._client.get(
+            f"{GITHUB_API_BASE}/users/{username}",
+            headers=headers,
+        )
+        if response.status_code == 404:
+            return False
+        if response.status_code in (403, 429):
+            self.quota_remaining = 0
+            raise GitHubRateLimitError(
+                f"GitHub API 限流（校验用户 {username}），"
+                "可配置 github_token 提升配额。"
+            )
+        response.raise_for_status()
+        return True
+
+    async def _search(
         self,
-        username: str,
+        query: str,
+        page: int,
         token: str,
-    ) -> tuple[list[GitHubPushRecord], bool]:
-        headers = {
-            "User-Agent": "astrbot-pulse",
-            "Accept": "application/vnd.github+json",
-        }
+    ) -> httpx.Response:
+        headers = {"User-Agent": "astrbot-pulse", "Accept": SEARCH_ACCEPT}
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        records: list[GitHubPushRecord] = []
-        truncated = False
-        for page in range(1, MAX_EVENT_PAGES + 1):
-            response = await self._client.get(
-                f"{GITHUB_API_BASE}/users/{username}/events/public",
-                params={"per_page": EVENTS_PER_PAGE, "page": page},
-                headers=headers,
-            )
-            self._track_quota(response)
-            self._check_response(response, username)
-            events = response.json()
-            if not isinstance(events, list):
-                raise GitHubEventsError(f"GitHub 事件接口返回异常数据: {username}")
-            for event in events:
-                if not isinstance(event, dict) or event.get("type") != "PushEvent":
-                    continue
-                record = self._parse_push_event(event)
-                if record:
-                    records.append(record)
+        interval = _AUTH_SEARCH_INTERVAL if token else _UNAUTH_SEARCH_INTERVAL
+        elapsed = monotonic() - self._last_search_at
+        if elapsed < interval:
+            await asyncio.sleep(interval - elapsed)
+        self._last_search_at = monotonic()
 
-            if len(events) < EVENTS_PER_PAGE:
-                return records, False
-
-        # 3 页均满 100 条，探测第 4 页判断是否被 300 条深度截断。
-        probe = await self._client.get(
-            f"{GITHUB_API_BASE}/users/{username}/events/public",
-            params={"per_page": EVENTS_PER_PAGE, "page": MAX_EVENT_PAGES + 1},
+        response = await self._client.get(
+            SEARCH_COMMITS_ENDPOINT,
+            params={"q": query, "per_page": SEARCH_PER_PAGE, "page": page},
             headers=headers,
         )
-        self._track_quota(probe)
-        try:
-            self._check_response(probe, username)
-            probe_events = probe.json()
-            truncated = isinstance(probe_events, list) and len(probe_events) > 0
-        except GitHubEventsError:
-            # 第 4 页不可用（422 等）说明事件流已到底，未截断。
-            truncated = False
-        return records, truncated
+        if response.status_code >= 500:
+            # 对 5xx 网关异常重试一次（如 GitHub 偶发 504）。
+            await asyncio.sleep(2.0)
+            self._last_search_at = monotonic()
+            response = await self._client.get(
+                SEARCH_COMMITS_ENDPOINT,
+                params={"q": query, "per_page": SEARCH_PER_PAGE, "page": page},
+                headers=headers,
+            )
+
+        self._track_quota(response)
+        if response.status_code in (403, 429):
+            self.quota_remaining = 0
+            raise GitHubRateLimitError(
+                "GitHub 提交搜索限流，请稍后再试或配置 github_token 提升配额。"
+            )
+        if response.status_code >= 400:
+            raise GitHubEventsError(
+                f"GitHub 提交搜索请求失败（HTTP {response.status_code}）"
+            )
+        return response
 
     def _track_quota(self, response: httpx.Response):
         remaining = response.headers.get("x-ratelimit-remaining", "")
         if remaining.isdigit():
             self.quota_remaining = int(remaining)
-
-    def _check_response(self, response: httpx.Response, username: str):
-        if response.status_code in (403, 429):
-            self.quota_remaining = 0
-            remaining = response.headers.get("x-ratelimit-remaining", "")
-            if remaining == "0" or response.status_code == 429:
-                reset = response.headers.get("x-ratelimit-reset", "")
-                raise GitHubRateLimitError(
-                    f"GitHub API 限流（用户 {username}），"
-                    f"重置时间 {reset or '未知'}。可配置 github_token 提升配额。"
-                )
-            raise GitHubRateLimitError(
-                f"GitHub 请求被拒绝（用户 {username}，HTTP {response.status_code}），"
-                "可能触发次级限流，请稍后再试或配置 github_token。"
-            )
-        if response.status_code == 404:
-            raise GitHubEventsError(f"GitHub 用户不存在: {username}")
-        if response.status_code >= 400:
-            raise GitHubEventsError(
-                f"GitHub 事件接口请求失败（用户 {username}，"
-                f"HTTP {response.status_code}）"
-            )
-
-    def _parse_push_event(self, event: dict[str, Any]) -> GitHubPushRecord | None:
-        payload = event.get("payload")
-        repo = event.get("repo")
-        if not isinstance(payload, dict) or not isinstance(repo, dict):
-            return None
-
-        created_at = _parse_datetime(event.get("created_at"))
-        repo_name = str(repo.get("name") or "").strip()
-        if not created_at or not repo_name:
-            return None
-
-        branch = str(payload.get("ref") or "")
-        if branch.startswith("refs/heads/"):
-            branch = branch[len("refs/heads/") :]
-        return GitHubPushRecord(
-            created_at=created_at,
-            repo=repo_name,
-            branch=branch,
-        )
 
 
 def avatar_url(username: str) -> str:
@@ -212,18 +222,25 @@ class GitHubDailySnapshot:
     date: str
     users: list[dict[str, Any]] = field(default_factory=list)
 
-    def stats_for(self, username: str) -> GitHubPushStats | None:
+    def stats_for(self, username: str) -> GitHubCommitStats | None:
         for user in self.users:
             if user.get("username") == username:
+                # 旧版快照（推送口径）没有 commits 字段，返回 None
+                # 让调用方回退实时统计，避免旧数据被当作 0 提交。
+                if "commits" not in user:
+                    return None
                 repos = [
-                    GitHubRepoCount(name=str(item.get("name") or ""), pushes=int(item.get("pushes") or 0))
+                    GitHubRepoCount(
+                        name=str(item.get("name") or ""),
+                        commits=int(item.get("commits") or 0),
+                    )
                     for item in user.get("repos") or []
                 ]
-                return GitHubPushStats(
+                return GitHubCommitStats(
                     username=username,
-                    pushes=int(user.get("pushes") or 0),
+                    commits=int(user.get("commits") or 0),
                     repos=repos,
-                    last_push=_parse_datetime(user.get("last_push")),
+                    last_commit=_parse_datetime(user.get("last_commit")),
                     truncated=bool(user.get("truncated")),
                 )
         return None
@@ -236,9 +253,9 @@ def snapshot_dir(data_dir: Path) -> Path:
 def save_daily_snapshot(
     data_dir: Path,
     date_str: str,
-    stats_list: list[GitHubPushStats],
+    stats_list: list[GitHubCommitStats],
 ):
-    """将当日全部订阅用户（含 0 推送）的统计落盘，供周报聚合。"""
+    """将当日全部订阅用户（含 0 提交）的统计落盘，供周报聚合。"""
     directory = snapshot_dir(data_dir)
     directory.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -247,13 +264,13 @@ def save_daily_snapshot(
         "users": [
             {
                 "username": stats.username,
-                "pushes": stats.pushes,
+                "commits": stats.commits,
                 "repos": [
-                    {"name": repo.name, "pushes": repo.pushes} for repo in stats.repos
+                    {"name": repo.name, "commits": repo.commits} for repo in stats.repos
                 ],
-                "last_push": (
-                    stats.last_push.isoformat(timespec="seconds")
-                    if stats.last_push
+                "last_commit": (
+                    stats.last_commit.isoformat(timespec="seconds")
+                    if stats.last_commit
                     else None
                 ),
                 "truncated": stats.truncated,

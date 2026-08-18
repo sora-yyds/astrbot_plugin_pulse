@@ -35,10 +35,11 @@ from .services.arena import (
 )
 from .services.epic import EpicFreeGame, EpicGamesClient
 from .services.github import (
-    GitHubEventsClient,
-    GitHubPushStats,
+    GitHubCommitSearchClient,
+    GitHubCommitStats,
     GitHubRateLimitError,
     GitHubRepoCount,
+    GitHubUserNotFoundError,
     avatar_url as github_avatar_url,
     cleanup_snapshots as github_cleanup_snapshots,
     load_snapshots as github_load_snapshots,
@@ -2202,19 +2203,19 @@ GITHUB_HTML_TEMPLATE = """
 
   <div class="topbar">
     <svg class="octicon" viewBox="0 0 16 16"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>
-    <span><span class="path">github.com</span> · Pulse 订阅推送报告</span>
+    <span><span class="path">github.com</span> · Pulse 订阅提交报告</span>
   </div>
 
   <div class="header">
     <div class="kicker">GITHUB PULSE</div>
     <div class="title-row">
-      <h1 class="title">订阅用户推送排行<span class="period">{{ period_label }}</span></h1>
+      <h1 class="title">订阅用户提交排行<span class="period">{{ period_label }}</span></h1>
       <div class="date-strip">{{ date }}</div>
     </div>
     <div class="stats-strip">
       <div class="stat-card">
-        <div class="stat-label">总推送次数</div>
-        <div class="stat-value green">{{ total_pushes }}</div>
+        <div class="stat-label">总提交次数</div>
+        <div class="stat-value green">{{ total_commits }}</div>
       </div>
       <div class="stat-card">
         <div class="stat-label">活跃用户</div>
@@ -2239,8 +2240,8 @@ GITHUB_HTML_TEMPLATE = """
       <div class="main">
         <div class="user-line">
           <span class="username">{{ user.username }}</span>
-          {% if user.truncated %}<span class="trunc-badge">事件流截断 ≥</span>{% endif %}
-          {% if user.last_push %}<span class="last-push">{{ user.last_push }}</span>{% endif %}
+          {% if user.truncated %}<span class="trunc-badge">统计截断 ≥</span>{% endif %}
+          {% if user.last_commit %}<span class="last-push">{{ user.last_commit }}</span>{% endif %}
         </div>
         <div class="bar-track"><div class="bar-fill" style="width: {{ user.bar_pct }}%"></div></div>
         {% if weekly %}
@@ -2256,17 +2257,17 @@ GITHUB_HTML_TEMPLATE = """
         </div>
       </div>
       <div class="count-box">
-        <div class="count">{{ user.pushes }}<em>次推送</em></div>
+        <div class="count">{{ user.commits }}<em>次提交</em></div>
       </div>
     </div>
     {% endfor %}
     {% else %}
-    <div class="empty">暂无推送数据。</div>
+    <div class="empty">暂无提交数据。</div>
     {% endif %}
   </div>
 
   <div class="footer">
-    <span>数据来自 GitHub 公开事件流（PushEvent）· 仅统计公开推送 · 由 Pulse 渲染</span>
+    <span>数据来自 GitHub 提交搜索（author-date）· 仅统计公开提交 · 由 Pulse 渲染</span>
     <span class="page-badge">{{ page }}/{{ pages }}</span>
   </div>
 </div>
@@ -2276,8 +2277,8 @@ GITHUB_HTML_TEMPLATE = """
 @register(
     PLUGIN_NAME,
     "Sora",
-    "每日推送 Epic 免费游戏、AI 行业简报、Arena 排行榜与 GitHub 用户推送排行。",
-    "0.5.0",
+    "每日推送 Epic 免费游戏、AI 行业简报、Arena 排行榜与 GitHub 用户提交排行。",
+    "0.5.1",
 )
 class PulsePlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -2287,8 +2288,8 @@ class PulsePlugin(Star):
         self._epic_client = EpicGamesClient()
         self._news_client = AiNewsClient()
         self._arena_client = ArenaLeaderboardClient()
-        self._github_client = GitHubEventsClient()
-        self._github_cache: dict[str, tuple[float, GitHubPushStats]] = {}
+        self._github_client = GitHubCommitSearchClient()
+        self._github_cache: dict[str, tuple[float, GitHubCommitStats]] = {}
         self._github_cache_ttl = 900.0
         self._halo_client = HaloSyncPostClient()
         self._plugin_data_dir = (
@@ -2397,7 +2398,7 @@ class PulsePlugin(Star):
 
     @pulse.command("github")
     async def pulse_github(self, event: AstrMessageEvent):
-        """立即发送订阅用户的 GitHub 推送排行；附加 week 参数可发送近 7 天周报。"""
+        """立即发送订阅用户的 GitHub 提交排行；附加 week 参数可发送近 7 天周报。"""
         weekly = self._parse_github_weekly_flag(event.message_str)
         chains, message = await self._build_github_chains(weekly)
         if not chains:
@@ -2460,9 +2461,9 @@ class PulsePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("bind_github")
     async def pulse_bind_github(self, event: AstrMessageEvent):
-        """将当前会话绑定到 GitHub 推送排行（日推与周报共用）。"""
+        """将当前会话绑定到 GitHub 提交排行（日推与周报共用）。"""
         self._add_target("github", event.unified_msg_origin)
-        yield event.plain_result("已绑定当前会话到 GitHub 推送排行（含周五周报）。")
+        yield event.plain_result("已绑定当前会话到 GitHub 提交排行（含周五周报）。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("bind")
@@ -2473,7 +2474,7 @@ class PulsePlugin(Star):
         self._add_target("arena", event.unified_msg_origin)
         self._add_target("github", event.unified_msg_origin)
         yield event.plain_result(
-            "已绑定当前会话到 Epic、AI 行业简报、Arena 排行榜和 GitHub 推送。"
+            "已绑定当前会话到 Epic、AI 行业简报、Arena 排行榜和 GitHub 提交排行。"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -2500,9 +2501,9 @@ class PulsePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind_github")
     async def pulse_unbind_github(self, event: AstrMessageEvent):
-        """取消当前会话的 GitHub 推送排行。"""
+        """取消当前会话的 GitHub 提交排行。"""
         self._remove_target("github", event.unified_msg_origin)
-        yield event.plain_result("已取消当前会话的 GitHub 推送排行（含周五周报）。")
+        yield event.plain_result("已取消当前会话的 GitHub 提交排行（含周五周报）。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @pulse.command("unbind")
@@ -2527,7 +2528,7 @@ class PulsePlugin(Star):
             f"Epic 免费游戏 ({len(epic_targets)}):\n{self._format_target_list(epic_targets)}\n\n"
             f"AI 行业简报 ({len(news_targets)}):\n{self._format_target_list(news_targets)}\n\n"
             f"Arena 排行榜 ({len(arena_targets)}):\n{self._format_target_list(arena_targets)}\n\n"
-            f"GitHub 推送 ({len(github_targets)}):\n{self._format_target_list(github_targets)}"
+            f"GitHub 提交排行 ({len(github_targets)}):\n{self._format_target_list(github_targets)}"
         )
         yield event.plain_result(text)
 
@@ -2780,7 +2781,7 @@ class PulsePlugin(Star):
             return None
 
     async def _build_github_chains(self, weekly: bool) -> tuple[list[list], str]:
-        """构建 GitHub 推送排行卡片，返回 (图片链列表, 提示文本)。
+        """构建 GitHub 提交排行卡片，返回 (图片链列表, 提示文本)。
 
         图片链列表可能包含多张（按 github_max_users_per_image 分页）；
         无数据或失败时返回空列表和说明文本。
@@ -2805,7 +2806,7 @@ class PulsePlugin(Star):
                 return [self._format_github_text(stats_list, weekly, now)], ""
         except Exception as exc:
             logger.error(f"Pulse failed to build GitHub card: {exc}", exc_info=True)
-            return [], "GitHub 推送卡片生成失败，请稍后再试。"
+            return [], "GitHub 提交排行卡片生成失败，请稍后再试。"
 
     def _github_usernames(self) -> list[str]:
         value = self.config.get("github_usernames", [])
@@ -2823,8 +2824,8 @@ class PulsePlugin(Star):
         username: str,
         day: datetime,
         now: datetime,
-    ) -> GitHubPushStats | None:
-        """抓取某用户某天的推送统计（带内存缓存）。day 为当天 0 点。
+    ) -> GitHubCommitStats | None:
+        """抓取某用户某天的提交统计（带内存缓存）。day 为当天 0 点。
 
         当天数据 15 分钟缓存；过去日期数据不变，缓存 6 小时，
         避免周报回补与重复触发指令浪费无 token 配额。
@@ -2842,16 +2843,19 @@ class PulsePlugin(Star):
         window_end = (
             now
             if date_str == now.strftime("%Y-%m-%d")
-            else day + timedelta(days=1) - timedelta(microseconds=1)
+            else day + timedelta(days=1) - timedelta(seconds=1)
         )
         token = str(self.config.get("github_token", "")).strip()
         try:
-            stats = await self._github_client.fetch_push_stats(
+            stats = await self._github_client.fetch_commit_stats(
                 username,
                 day,
                 window_end,
                 token=token,
             )
+        except GitHubUserNotFoundError as exc:
+            logger.warning(f"Pulse GitHub user not found: {exc}")
+            return None
         except GitHubRateLimitError as exc:
             logger.warning(f"Pulse GitHub rate limited ({username}): {exc}")
             return None
@@ -2865,21 +2869,23 @@ class PulsePlugin(Star):
     async def _fetch_github_daily_stats(
         self,
         now: datetime,
-    ) -> tuple[list[GitHubPushStats], str]:
-        """抓取全部订阅用户今日统计，过滤 0 推送用户，并落盘快照。"""
+    ) -> tuple[list[GitHubCommitStats], str]:
+        """抓取全部订阅用户今日统计，过滤 0 提交用户，并落盘快照。"""
         usernames = self._github_usernames()
         if not usernames:
             return [], "未配置订阅用户（github_usernames）。"
 
         day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        stats_list: list[GitHubPushStats] = []
+        stats_list: list[GitHubCommitStats] = []
         for username in usernames:
             stats = await self._fetch_github_day_stats(username, day_start, now)
             if stats is not None:
                 stats_list.append(stats)
 
         if not stats_list:
-            return [], "GitHub 数据获取失败（可能触发限流），可配置 github_token 后重试。"
+            if len(usernames) == 1:
+                return [], f"GitHub 用户 {usernames[0]} 获取失败（不存在、限流或网络异常），请检查配置。"
+            return [], "GitHub 数据获取失败（用户不存在、限流或网络异常），请检查 github_usernames 配置。"
 
         date_str = now.strftime("%Y-%m-%d")
         try:
@@ -2890,22 +2896,22 @@ class PulsePlugin(Star):
         except Exception as exc:
             logger.error(f"Pulse failed to save github snapshot: {exc}", exc_info=True)
 
-        active = [stats for stats in stats_list if stats.pushes > 0]
+        active = [stats for stats in stats_list if stats.commits > 0]
         active.sort(
             key=lambda item: (
-                -item.pushes,
-                -(item.last_push.timestamp() if item.last_push else 0),
+                -item.commits,
+                -(item.last_commit.timestamp() if item.last_commit else 0),
             )
         )
         if not active:
-            return [], "今日订阅用户均无推送。"
+            return [], "今日订阅用户均无提交。"
         return active, ""
 
     async def _fetch_github_weekly_stats(
         self,
         now: datetime,
     ) -> tuple[
-        list[GitHubPushStats],
+        list[GitHubCommitStats],
         dict[str, dict[str, int | None]],
         str,
     ]:
@@ -2923,7 +2929,7 @@ class PulsePlugin(Star):
             await self._fetch_github_daily_stats(now)
             snapshots = github_load_snapshots(self._plugin_data_dir)
 
-        per_user: dict[str, dict[str, GitHubPushStats | None]] = {
+        per_user: dict[str, dict[str, GitHubCommitStats | None]] = {
             username: {date_str: None for date_str in date_strs}
             for username in usernames
         }
@@ -2939,7 +2945,7 @@ class PulsePlugin(Star):
                     per_user[username][date_str] = stats
 
         # 2) 缺失日期回退实时抓取：从近到远，受无 token 配额预算保护
-        #    （预留 5 次请求给日推等任务，避免首次安装时耗尽 60 次/h）。
+        #    （预留少量搜索配额给日推等任务，避免首次安装时耗尽）。
         quota_reserve = 5
         backfill_stopped = False
         for day, date_str in reversed(list(zip(dates, date_strs))):
@@ -2959,12 +2965,12 @@ class PulsePlugin(Star):
                 stats = await self._fetch_github_day_stats(username, day, now)
                 per_user[username][date_str] = stats
 
-        result: list[GitHubPushStats] = []
+        result: list[GitHubCommitStats] = []
         day_series: dict[str, dict[str, int | None]] = {}
         for username in usernames:
             day_map = per_user[username]
             series: dict[str, int | None] = {
-                date_str: (stats.pushes if stats else None)
+                date_str: (stats.commits if stats else None)
                 for date_str, stats in day_map.items()
             }
             day_series[username] = series
@@ -2974,17 +2980,17 @@ class PulsePlugin(Star):
                 continue
 
             repo_counts: dict[str, int] = {}
-            last_push = None
+            last_commit = None
             truncated = False
             for stats in day_map.values():
                 if not stats:
                     continue
                 for repo in stats.repos:
-                    repo_counts[repo.name] = repo_counts.get(repo.name, 0) + repo.pushes
-                if stats.last_push and (
-                    last_push is None or stats.last_push > last_push
+                    repo_counts[repo.name] = repo_counts.get(repo.name, 0) + repo.commits
+                if stats.last_commit and (
+                    last_commit is None or stats.last_commit > last_commit
                 ):
-                    last_push = stats.last_push
+                    last_commit = stats.last_commit
                 truncated = truncated or stats.truncated
 
             repos = sorted(
@@ -2992,31 +2998,31 @@ class PulsePlugin(Star):
                 key=lambda item: (-item[1], item[0]),
             )
             result.append(
-                GitHubPushStats(
+                GitHubCommitStats(
                     username=username,
-                    pushes=total,
+                    commits=total,
                     repos=[
-                        GitHubRepoCount(name=name, pushes=count)
+                        GitHubRepoCount(name=name, commits=count)
                         for name, count in repos
                     ],
-                    last_push=last_push,
+                    last_commit=last_commit,
                     truncated=truncated,
                 )
             )
 
         result.sort(
             key=lambda item: (
-                -item.pushes,
-                -(item.last_push.timestamp() if item.last_push else 0),
+                -item.commits,
+                -(item.last_commit.timestamp() if item.last_commit else 0),
             )
         )
         if not result:
-            return [], day_series, "近 7 天订阅用户均无推送。"
+            return [], day_series, "近 7 天订阅用户均无提交。"
         return result, day_series, ""
 
     async def _render_github_images(
         self,
-        stats_list: list[GitHubPushStats],
+        stats_list: list[GitHubCommitStats],
         weekly: bool,
         day_series: dict[str, dict[str, int | None]],
         now: datetime,
@@ -3033,7 +3039,7 @@ class PulsePlugin(Star):
         urls: list[str] = []
 
         for page_index, page_users in enumerate(pages, start=1):
-            max_pushes = max((user.pushes for user in page_users), default=1)
+            max_commits = max((user.commits for user in page_users), default=1)
             users_data = []
             total_repos: set[str] = set()
             for user in page_users:
@@ -3044,7 +3050,7 @@ class PulsePlugin(Star):
                         weekly,
                         day_series.get(user.username, {}),
                         dates,
-                        max_pushes,
+                        max_commits,
                         max_repos,
                         tz,
                         rank=len(users_data) + 1,
@@ -3059,7 +3065,7 @@ class PulsePlugin(Star):
             data = {
                 "period_label": period_label,
                 "date": date_label,
-                "total_pushes": sum(user.pushes for user in page_users),
+                "total_commits": sum(user.commits for user in page_users),
                 "active_users": len(page_users),
                 "total_repos": len(total_repos),
                 "users": users_data,
@@ -3078,26 +3084,30 @@ class PulsePlugin(Star):
 
     def _github_user_data(
         self,
-        stats: GitHubPushStats,
+        stats: GitHubCommitStats,
         weekly: bool,
         series: dict[str, int | None],
         dates: list[datetime],
-        max_pushes: int,
+        max_commits: int,
         max_repos: int,
         tz: tzinfo,
         *,
         rank: int,
     ) -> dict:
         rank_class = {1: "top1", 2: "top2", 3: "top3"}.get(rank, "")
-        if stats.last_push:
+        if stats.last_commit:
             last_label = (
-                f"最近 {stats.last_push.astimezone(tz):%m-%d %H:%M}"
+                f"最近 {stats.last_commit.astimezone(tz):%m-%d %H:%M}"
                 if weekly
-                else f"最近 {stats.last_push.astimezone(tz):%H:%M}"
+                else f"最近 {stats.last_commit.astimezone(tz):%H:%M}"
             )
         else:
             last_label = ""
-        bar_pct = max(3.0, round(stats.pushes / max_pushes * 100, 1)) if stats.pushes else 0.0
+        bar_pct = (
+            max(3.0, round(stats.commits / max_commits * 100, 1))
+            if stats.commits
+            else 0.0
+        )
 
         days = []
         if weekly:
@@ -3110,7 +3120,7 @@ class PulsePlugin(Star):
                 days.append(
                     {
                         "cls": f"l{level}" if level else "",
-                        "label": f"{day:%m-%d} · {count} 次推送",
+                        "label": f"{day:%m-%d} · {count} 次提交",
                     }
                 )
 
@@ -3122,9 +3132,9 @@ class PulsePlugin(Star):
             "initial": html.escape((stats.username[:1] or "?").upper()),
             "avatar": github_avatar_url(stats.username),
             "truncated": stats.truncated,
-            "last_push": last_label,
+            "last_commit": last_label,
             "bar_pct": bar_pct,
-            "pushes": stats.pushes,
+            "commits": stats.commits,
             "repos": [
                 {"name": html.escape(repo.name)} for repo in repos
             ],
@@ -3134,16 +3144,16 @@ class PulsePlugin(Star):
 
     def _format_github_text(
         self,
-        stats_list: list[GitHubPushStats],
+        stats_list: list[GitHubCommitStats],
         weekly: bool,
         now: datetime,
     ) -> list:
         period_label = "近 7 天" if weekly else "今日"
-        lines = [f"GitHub 订阅用户推送排行 | {period_label} {now:%Y-%m-%d}"]
+        lines = [f"GitHub 订阅用户提交排行 | {period_label} {now:%Y-%m-%d}"]
         for index, stats in enumerate(stats_list, start=1):
             repo_names = "、".join(repo.name for repo in stats.repos[:3])
             suffix = f"（{repo_names}）" if repo_names else ""
-            lines.append(f"{index}. @{stats.username}：{stats.pushes} 次推送{suffix}")
+            lines.append(f"{index}. @{stats.username}：{stats.commits} 次提交{suffix}")
         return [Comp.Plain("\n".join(lines))]
 
     def _parse_github_weekly_flag(self, message_text: str) -> bool:

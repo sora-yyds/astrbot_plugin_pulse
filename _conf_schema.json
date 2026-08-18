@@ -121,20 +121,20 @@
     "default": 10
   },
   "github_enabled": {
-    "description": "启用 GitHub 推送排行定时推送",
+    "description": "启用 GitHub 提交排行定时推送",
     "type": "bool",
     "default": true
   },
   "github_daily_time": {
     "description": "GitHub 每日推送时间",
     "type": "string",
-    "hint": "24 小时制 HH:MM，例如 22:00。统计当天 00:00 至推送时刻的公开推送。",
+    "hint": "24 小时制 HH:MM，例如 22:00。统计当天 00:00 至推送时刻的公开提交。",
     "default": "22:00"
   },
   "github_weekly_enabled": {
     "description": "启用 GitHub 周五周报",
     "type": "bool",
-    "hint": "开启后每周五推送近 7 天推送汇总。",
+    "hint": "开启后每周五推送近 7 天提交汇总。",
     "default": true
   },
   "github_weekly_time": {
@@ -144,7 +144,7 @@
     "default": "22:30"
   },
   "github_target_sessions": {
-    "description": "GitHub 推送目标会话（日推与周报共用）",
+    "description": "GitHub 提交排行推送目标会话（日推与周报共用）",
     "type": "list",
     "hint": "可在目标会话中使用 /pulse bind_github 自动写入。",
     "default": []
@@ -152,13 +152,13 @@
   "github_usernames": {
     "description": "订阅的 GitHub 用户名",
     "type": "list",
-    "hint": "逗号分隔多个用户名，例如 torvalds, soulter。按当日推送次数降序排行，0 推送用户不会推送。",
+    "hint": "逗号分隔多个用户名，例如 torvalds, soulter。按当日提交次数降序排行，0 提交用户不会推送。",
     "default": []
   },
   "github_token": {
     "description": "GitHub Token（可选）",
     "type": "string",
-    "hint": "留空使用无鉴权模式（60 次/小时）。订阅用户较多或非常活跃时可填入 Personal Access Token 提升至 5000 次/小时。仅保存在 AstrBot 本地配置。",
+    "hint": "留空使用无鉴权提交搜索（10 次/分钟）；订阅用户较多时可填入 Personal Access Token 提升至 30 次/分钟。仅保存在 AstrBot 本地配置。",
     "default": ""
   },
   "github_max_users_per_image": {
