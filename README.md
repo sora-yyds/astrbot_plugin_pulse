@@ -4,14 +4,14 @@
 
 # Pulse 每日推送
 
-Pulse 是一个面向 AstrBot 的每日推送插件，用于定时推送 Epic 免费游戏、AI 行业简报、Arena 代码模型排行榜和 GitHub 订阅用户推送排行。它会把推送内容渲染成图片发送到指定会话，并可将 AI 长文同步发布到 Halo SyncPostAI。
+Pulse 是一个面向 AstrBot 的每日推送插件，用于定时推送 Epic 免费游戏、AI 行业简报、Arena 代码模型排行榜和 GitHub 订阅用户提交排行。它会把推送内容渲染成图片发送到指定会话，并可将 AI 长文同步发布到 Halo SyncPostAI。
 
 ## 功能概览
 
 - Epic 免费游戏监控：抓取当前可领取的 Epic Games 免费促销，展示游戏封面和领取截止时间。
 - AI 行业简报：从 Cloudflare Worker 聚合服务读取已清洗的 AI 资讯 JSON。
 - Arena 排行榜：直接抓取 arena.ai 代码竞技场排行榜（Next.js RSC 数据），渲染模型排名卡片图片。
-- GitHub 推送排行：聚合订阅用户每日公开推送次数与涉及仓库，横向条形图排行，支持多用户自动分图与周五周报。
+- GitHub 提交排行：通过 GitHub 提交搜索按天统计订阅用户的公开提交数与涉及仓库，横向条形图排行，支持多用户自动分图与周五周报。
 - Worker 缓存链路：Worker 使用 Cron 定时抓取 RSS、arXiv、Hugging Face Daily Papers 等来源，并缓存到 Cloudflare KV。
 - 单次 LLM 合成：一次 LLM 调用同时生成 QQ 图片卡片、文本回退内容和网站发布用 Markdown 长文。
 - 专用 LLM Provider：可为 AI 简报单独多选 Provider；失败时自动切换，单 Provider 失败后等待 10 秒重试一次。
@@ -75,18 +75,18 @@ pip install -r requirements.txt
 - `/pulse now`：立即发送 Epic 和 AI 简报。
 - `/pulse leaderboard [数量]`：立即抓取 Arena 代码模型排行榜并渲染成图片，例如 `/pulse leaderboard 15`。
 - `/pulse arena`：`/pulse leaderboard` 的别名。
-- `/pulse github`：立即发送订阅用户的 GitHub 今日推送排行。
+- `/pulse github`：立即发送订阅用户的 GitHub 今日提交排行。
 - `/pulse github week`：立即发送近 7 天 GitHub 推送周报（`/pulse gh` 为别名）。
 - `/pulse publish_news`：将最近生成的 AI Markdown 长文手动发布到 Halo。
 - `/pulse bind_epic`：将当前会话绑定到 Epic 定时推送。
 - `/pulse bind_news`：将当前会话绑定到 AI 简报定时推送。
 - `/pulse bind_arena`：将当前会话绑定到 Arena 排行榜定时推送。
-- `/pulse bind_github`：将当前会话绑定到 GitHub 推送排行（日推与周报共用）。
+- `/pulse bind_github`：将当前会话绑定到 GitHub 提交排行（日推与周报共用）。
 - `/pulse bind`：将当前会话同时绑定到全部定时推送。
 - `/pulse unbind_epic`：取消当前会话的 Epic 推送。
 - `/pulse unbind_news`：取消当前会话的 AI 简报推送。
 - `/pulse unbind_arena`：取消当前会话的 Arena 排行榜推送。
-- `/pulse unbind_github`：取消当前会话的 GitHub 推送排行。
+- `/pulse unbind_github`：取消当前会话的 GitHub 提交排行。
 - `/pulse unbind`：取消当前会话的全部 Pulse 推送。
 - `/pulse targets`：查看当前推送目标。
 - `/pulse providers`：查看 AstrBot 已配置的 LLM Provider，已选中的 Provider 会用 `*` 标记。
@@ -125,26 +125,27 @@ pip install -r requirements.txt
 
 排行榜数据直接抓取自 arena.ai 官方页面：插件以 Next.js RSC（`RSC: 1`）请求头获取页面，并从返回的 flight payload 中解析 `entries` 数据（排名、分数、置信区间、票数、价格、上下文长度、许可证等），无需第三方接口。
 
-## GitHub 推送排行配置
+## GitHub 提交排行配置
 
-- `github_enabled`：启用 GitHub 推送排行定时推送。
-- `github_daily_time`：GitHub 每日推送时间，默认 `22:00`，统计当天 00:00 至推送时刻的公开推送。
+- `github_enabled`：启用 GitHub 提交排行定时推送。
+- `github_daily_time`：GitHub 每日推送时间，默认 `22:00`，统计当天 00:00 至推送时刻的公开提交。
 - `github_weekly_enabled`：启用周五周报，默认 `true`。
 - `github_weekly_time`：周报推送时间（周五），默认 `22:30`。
-- `github_target_sessions`：GitHub 推送目标会话（日推与周报共用）。
+- `github_target_sessions`：GitHub 提交排行推送目标会话（日推与周报共用）。
 - `github_usernames`：订阅的 GitHub 用户名，逗号分隔多个，例如 `torvalds, soulter`。
-- `github_token`：可选 GitHub Personal Access Token。留空使用无鉴权模式（60 次/小时）；订阅用户较多或订阅非常活跃的用户时可填入以提升至 5000 次/小时。仅保存在 AstrBot 本地配置。
+- `github_token`：可选 GitHub Personal Access Token。留空使用无鉴权提交搜索（10 次/分钟）；订阅用户较多时可填入以提升至 30 次/分钟。仅保存在 AstrBot 本地配置。
 - `github_max_users_per_image`：每张图片最多展示用户数，默认 `8`，超出自动拆分多张图片依次推送。
 - `github_max_repos_per_user`：每个用户最多展示仓库数，默认 `3`，超出以 `+N` 折叠。
 
 行为说明：
 
-- 数据来自 GitHub 公开事件流（PushEvent），仅统计公开推送，无需任何鉴权。
-- 按推送次数降序排行；当日 0 推送的用户不会出现在卡片中，全员 0 推送时当天不推送。
+- 数据来自 GitHub 提交搜索接口（`author:` + `author-date:` 按插件时区当天窗口精确统计），统计的是**提交（commit）数**而非推送次数，仅覆盖公开仓库。
+- 按提交次数降序排行；当日 0 提交的用户不会出现在卡片中，全员 0 提交时当天不推送。
 - 周报统计滚动近 7 天，与日推共用同一组目标会话。
-- 首次安装当天触发周报时，缺失的历史日期会回退实时抓取 GitHub 事件流补齐（受无 token 配额预算保护，预留 5 次请求给其他任务；抓取失败或配额不足的日期在周报迷你柱上显示「数据缺失」）。随着每日任务运行，快照逐渐累积，后续周报不再需要回补。
+- 首次安装当天触发周报时，缺失的历史日期会回退实时搜索补齐（受无 token 配额预算保护，预留 5 次请求给其他任务；抓取失败或配额不足的日期在周报迷你柱上显示「数据缺失」）。随着每日任务运行，快照逐渐累积，后续周报不再需要回补。
 - 每日推送成功后会把当天统计保存为快照（`data/plugin_data/astrbot_plugin_pulse/github_stats/YYYY-MM-DD.json`），周报聚合快照；快照只保留最近 8 天，自动清理不堆积。
 - 抓取结果带内存缓存（当天 15 分钟、过去日期 6 小时），避免频繁触发指令耗尽无 token 配额。
+- 不存在的用户名会在 0 提交时通过用户接口校验并提示，避免被误判为 0 提交。
 
 ## Halo 发布配置
 
@@ -232,16 +233,16 @@ AstrBot 定时任务或 /pulse leaderboard 指令
   -> 推送图片到已绑定会话
 ```
 
-GitHub 推送排行链路：
+GitHub 提交排行链路：
 
 ```text
 AstrBot 定时任务或 /pulse github 指令
-  -> 抓取订阅用户的 GitHub 公开事件流（PushEvent）
-  -> 按插件时区聚合今日推送次数与涉及仓库
+  -> 通过 GitHub 提交搜索（author: + author-date: 当天窗口）统计订阅用户提交数
+  -> 按插件时区聚合当日提交数与涉及仓库
   -> 保存当日快照并清理 8 天前旧快照
-  -> 按推送次数降序渲染 GitHub 风格横向条形图（多用户自动分图）
+  -> 按提交次数降序渲染 GitHub 风格横向条形图（多用户自动分图）
   -> 推送图片到已绑定会话
-  -> 周五周报：聚合近 7 天快照（缺失日期回退实时抓取）
+  -> 周五周报：聚合近 7 天快照（缺失日期回退实时搜索）
 ```
 
 ## Worker 管理页
